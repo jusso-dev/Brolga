@@ -108,7 +108,12 @@ deny = [
     # libraries in one tree means two sets of parsing rules and two sets of edge cases.
     { crate = "chrono", reason = "use the `time` crate; two date-time libraries means two sets of parsing edge cases" },
     # Superseded by `std::sync::LazyLock` on the declared MSRV.
-    { crate = "lazy_static", reason = "use std::sync::LazyLock, stable since Rust 1.80 and below our MSRV" },
+    #
+    # `wrappers` narrows the ban to first-party use: Brolga must not depend on it, and it is
+    # permitted where it arrives through `sharded-slab`, which `tracing-subscriber` pulls in and
+    # which we do not control. Removing the ban entirely would have been the easy fix and the wrong
+    # one — it would also stop catching a direct dependency added by hand.
+    { crate = "lazy_static", reason = "use std::sync::LazyLock, stable since Rust 1.80 and below our MSRV", wrappers = ["sharded-slab"] },
     # An unmaintained crate is an unpatched crate.
     { crate = "ansi_term", reason = "unmaintained" },
     { crate = "atty", reason = "unmaintained; RUSTSEC-2021-0145" },

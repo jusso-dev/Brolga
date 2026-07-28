@@ -167,11 +167,11 @@ jobs:
       - run: cargo metadata --locked --format-version 1 > /dev/null
 
   # ---------------------------------------------------------------------------------------------
-  # Smoke: prove the release profile builds and the shipped artefact runs.
+  # Smoke: prove the release profile builds and the shipped artefact actually runs.
   #
-  # Until #7 adds the `brolga` binary this builds the release profile only. The binary steps are
-  # written and disabled rather than omitted, so enabling them is a one-line change in the PR that
-  # creates the binary rather than a rediscovery of what the job should have done.
+  # The release profile differs from debug in ways that break a working build: `lto`,
+  # `codegen-units = 1`, `strip`, and `panic = "abort"`. A binary that links is not a binary that
+  # starts, so this job runs it on every platform and checks a real command's behaviour.
   # ---------------------------------------------------------------------------------------------
   smoke:
     name: Release smoke (${{ matrix.os }})
@@ -194,28 +194,43 @@ jobs:
       - name: Build release with default features
         run: cargo build --locked --workspace --release
 
-      - name: Confirm the brolga binary is not yet claimed
+      # The binary has to *run*, not merely link. A release build that aborts on start-up — a
+      # missing symbol, a broken `panic = "abort"` interaction, a platform-specific path bug —
+      # links perfectly and fails on first use.
+      - name: Smoke the binary
+        run: cargo run --locked --release --bin brolga -- --version
+
+      # And it has to do something. `--version` proves the process starts; `exit-codes` proves the
+      # command tree, the output modes, and the stdout/stderr split all survived the release
+      # profile's `lto`, `strip`, and `panic = "abort"`.
+      - name: Smoke a real command
         shell: bash
         run: |
-          # Guard against the README or a release claiming a binary that does not exist.
-          # When #7 lands the `brolga` binary, replace this step with the two below.
-          if cargo metadata --locked --format-version 1 \
-            | grep -q '"name":"brolga-cli"'; then
-            echo "brolga-cli exists: enable the binary smoke steps in .github/workflows/ci.yml" >&2
-            exit 1
-          fi
-          echo "No binary yet. Cross-platform evidence covers the library workspace only."
+          set -euo pipefail
+          cargo run --locked --release --bin brolga -- --output json exit-codes > codes.json
+          grep -q '"not_implemented"' codes.json
+          echo "exit-code registry reported on stdout as JSON"
 
-      # - name: Smoke the binary
-      #   run: cargo run --locked --release --bin brolga -- --version
-      #
-      # - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-      #   with:
-      #     name: brolga-${{ matrix.os }}
-      #     path: |
-      #       target/release/brolga
-      #       target/release/brolga.exe
-      #     if-no-files-found: error
+      # An unimplemented command must fail rather than pretend to succeed. Checked on every
+      # platform, because "it exits 5" is the contract a pipeline depends on.
+      - name: Confirm unimplemented commands fail loudly
+        shell: bash
+        run: |
+          set +e
+          cargo run --locked --quiet --release --bin brolga -- ingest x > out.txt 2> err.txt
+          status=$?
+          set -e
+          test "$status" -eq 5 || { echo "expected exit 5, got $status" >&2; exit 1; }
+          test ! -s out.txt || { echo "an unimplemented command wrote to stdout" >&2; exit 1; }
+          grep -qi "not implemented" err.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brolga-${{ matrix.os }}
+          path: |
+            target/release/brolga
+            target/release/brolga.exe
+          if-no-files-found: error
 
   # ---------------------------------------------------------------------------------------------
   # One required check to configure in branch protection, so adding a job later does not require

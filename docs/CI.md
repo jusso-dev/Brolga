@@ -21,7 +21,7 @@ record of whether that commit was green.
 | `docs` | Linux | `cargo doc --no-deps --all-features` with `RUSTDOCFLAGS: -D warnings`. |
 | `supply-chain` | Linux | `cargo deny check licenses advisories bans sources`. |
 | `lockfile` | Linux | `cargo metadata --locked` fails if `Cargo.lock` is out of date with the manifests. |
-| `smoke` | Linux, macOS, Windows | Builds the release profile, which differs from debug in ways that break builds: `lto`, `codegen-units = 1`, `strip`, `panic = "abort"`. |
+| `smoke` | Linux, macOS, Windows | Builds the release profile and **runs the binary**: `--version`, a real command whose JSON reaches stdout, and an unimplemented command that must exit `5` with an empty stdout. Uploads the artefact. |
 | `ci-passed` | Linux | Aggregates every job above into one required check. |
 
 Rust warnings fail everywhere: `RUSTFLAGS: -D warnings` and `RUSTDOCFLAGS: -D warnings` are set at
@@ -41,16 +41,25 @@ cancelling the other two hides whether the failure *is* platform-specific.
 
 ## The `brolga` binary
 
-The `smoke` job currently builds the release profile for the library workspace only, because the
-`brolga` binary does not exist yet — it arrives with
-[#7](https://github.com/jusso-dev/Brolga/issues/7). The job asserts that `brolga-cli` is *absent*
-and fails if it appears, which turns "the binary landed and nobody enabled its smoke test" into a
-build failure rather than a silent coverage gap. The two steps that build and upload the binary are
-written and commented out immediately below, so enabling them is a one-line change in the pull
-request that creates the binary.
+The `smoke` job builds the release profile and then *runs* the binary on all three platforms. The
+distinction matters: the release profile sets `lto`, `codegen-units = 1`, `strip`, and
+`panic = "abort"`, and a binary that links under those settings is not necessarily a binary that
+starts. A missing symbol, a broken panic-strategy interaction, or a platform-specific path bug links
+perfectly and fails on first use.
 
-Until then, cross-platform evidence covers the library workspace. No release artefact is published
-by CI; releasing is out of scope for `v0.1.0`.
+Three checks, on every platform:
+
+1. `brolga --version` — the process starts.
+2. `brolga --output json exit-codes` — the command tree, output modes, and the stdout/stderr split
+   survived the release profile, and the result really is parseable JSON on stdout.
+3. `brolga ingest x` — an unimplemented command exits `5`, writes **nothing** to stdout, and
+   explains itself on stderr. That is the contract a pipeline depends on, so it is checked
+   per-platform rather than assumed from a unit test.
+
+The built binary is uploaded as an artefact per platform, with `if-no-files-found: error` so a
+silently missing binary fails the job rather than producing an empty artefact.
+
+CI does not publish a release; releasing is out of scope for `v0.1.0`.
 
 ## Supply-chain policy
 
