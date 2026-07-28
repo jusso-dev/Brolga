@@ -135,6 +135,7 @@ dependencies = [
  "brolga-model",
  "brolga-security",
  "brolga-storage",
+ "idna",
  "proptest",
  "serde",
  "serde_json",
