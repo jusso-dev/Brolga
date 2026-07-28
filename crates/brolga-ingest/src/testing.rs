@@ -17,7 +17,8 @@ use brolga_model::{Entity, EntityKind, Id, ShortText, UntrustedText};
 use crate::detect::{Candidate, DetectionConfidence, FormatHint};
 use crate::error::ParseError;
 use crate::parser::{
-    IntelligenceParser, ParseContext, ParseOutput, ParsedRecord, ParserId, candidate,
+    IntelligenceParser, ParseContext, ParseOutput, ParsedRecord, ParserId, RejectedRecord,
+    candidate,
 };
 
 /// The media type this parser is certain about.
@@ -88,6 +89,7 @@ impl IntelligenceParser for TestRecordsParser {
 
         let mut records = Vec::new();
         let mut notes = Vec::new();
+        let mut rejected = Vec::new();
         let mut offset: u64 = 0;
 
         for line in text.split_inclusive('\n') {
@@ -109,15 +111,29 @@ impl IntelligenceParser for TestRecordsParser {
                 continue;
             }
 
-            let name = trimmed.strip_prefix("entity:").ok_or_else(|| {
-                ParseError::at(
+            let Some(name) = trimmed.strip_prefix("entity:") else {
+                // Per-record rather than whole-document, so permissive ingestion can keep the good
+                // rows. A parser that can only say "the document failed" forces an operator to
+                // discard 99,999 usable records because of one bad line.
+                rejected.push(RejectedRecord::at(
                     offset,
+                    "malformed_line",
                     "expected a line beginning `entity:`, a blank line, or a `#` comment",
-                )
-            })?;
+                    trimmed,
+                ));
+                offset = offset.saturating_add(line_bytes);
+                continue;
+            };
             let name = name.trim();
             if name.is_empty() {
-                return Err(ParseError::at(offset, "`entity:` with no name"));
+                rejected.push(RejectedRecord::at(
+                    offset,
+                    "empty_name",
+                    "`entity:` with no name",
+                    trimmed,
+                ));
+                offset = offset.saturating_add(line_bytes);
+                continue;
             }
             if u64::try_from(name.len()).unwrap_or(u64::MAX)
                 > context.limits().input.max_field_bytes
@@ -146,7 +162,11 @@ impl IntelligenceParser for TestRecordsParser {
             offset = offset.saturating_add(line_bytes);
         }
 
-        Ok(ParseOutput { records, notes })
+        Ok(ParseOutput {
+            records,
+            notes,
+            rejected,
+        })
     }
 }
 
