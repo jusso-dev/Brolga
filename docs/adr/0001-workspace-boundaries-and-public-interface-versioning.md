@@ -1,6 +1,6 @@
 # ADR 0001 — Cargo workspace boundaries and public interface versioning
 
-- Status: accepted
+- Status: accepted; §4 amended by [0002](0002-raise-msrv-to-1-88-for-a-security-advisory.md)
 - Date: 2026-07-28
 - Milestone: `v0.1.0 — Foundation`
 - Issue: [#2](https://github.com/jusso-dev/Brolga/issues/2)
@@ -108,6 +108,11 @@ Rules:
   are never silently coupled.
 
 ### 4. Rust version policy
+
+> **Amended.** The MSRV floor recorded below was raised to **1.88.0** by
+> [ADR 0002](0002-raise-msrv-to-1-88-for-a-security-advisory.md), using the raise procedure this
+> section defines. The original text is left unedited as the historical record; 0002 is the
+> operative decision.
 
 - Edition: **2024**.
 - MSRV: **1.85.0**, declared as `rust-version` in the workspace package metadata and verified by a
