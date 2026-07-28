@@ -8,7 +8,8 @@ exception to a project-wide prohibition.
 
 | ADR | Title | Status | Issue |
 | --- | --- | --- | --- |
-| [0001](0001-workspace-boundaries-and-public-interface-versioning.md) | Cargo workspace boundaries and public interface versioning | accepted | [#2](https://github.com/jusso-dev/Brolga/issues/2) |
+| [0001](0001-workspace-boundaries-and-public-interface-versioning.md) | Cargo workspace boundaries and public interface versioning | accepted (§4 amended by 0002) | [#2](https://github.com/jusso-dev/Brolga/issues/2) |
+| [0002](0002-raise-msrv-to-1-88-for-a-security-advisory.md) | Raise the MSRV to 1.88.0 to take a security fix | accepted | [#9](https://github.com/jusso-dev/Brolga/issues/9) |
 
 ## Rules
 
