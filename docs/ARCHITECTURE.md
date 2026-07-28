@@ -1,6 +1,6 @@
 # Architecture plan
 
-Status: proposed. Product implementation has not started.
+Status: accepted. The `v0.1.0` crates exist and follow it; the later crates are planned. Where this document and an [ADR](adr/README.md) disagree, the ADR wins.
 
 ## Core flow
 
