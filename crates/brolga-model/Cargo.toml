@@ -1,0 +1,29 @@
+[package]
+name = "brolga-model"
+description = "Versioned canonical threat-intelligence types, identifiers, markings, and JSON Schemas for Brolga"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords = ["threat-intelligence", "security", "canonical-model"]
+categories = ["data-structures"]
+
+[lints]
+workspace = true
+
+[dependencies]
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+thiserror = "2.0.19"
+time = { version = "0.3.45", features = ["serde", "formatting", "parsing", "macros"] }
+url = { version = "2.5.8", features = ["serde"] }
+uuid = { version = "1.24.0", default-features = false, features = ["v5", "serde"] }
+
+[dev-dependencies]
+proptest = "1.11.0"
+time = { version = "0.3.45", features = ["parsing"] }

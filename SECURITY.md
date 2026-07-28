@@ -22,3 +22,10 @@ Brolga's planned security baseline includes:
 - read-only upstream integrations by default
 
 Planning issues track implementation and verification of these controls. This document does not claim controls exist before their linked issues close.
+
+## Threat model
+
+[docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) records what Brolga assumes, which boundaries it
+defends, what it deliberately does not defend, and the residual risks. Read it before proposing a
+change that relaxes a limit or a default — the security-relevant defaults are fields rather than
+constants precisely so that relaxing one happens in a diff somebody reviews.

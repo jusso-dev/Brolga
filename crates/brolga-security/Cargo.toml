@@ -1,0 +1,22 @@
+[package]
+name = "brolga-security"
+description = "Shared trust classification, resource limits, cancellation, and network policy for Brolga"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories = ["security"]
+
+[lints]
+workspace = true
+
+[dependencies]
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.19"
+
+[dev-dependencies]
+serde_json = "1.0.151"

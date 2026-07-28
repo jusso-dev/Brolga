@@ -1,0 +1,55 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/brolga-cli",
+    "crates/brolga-config",
+    "crates/brolga-model",
+    "crates/brolga-security",
+    "crates/brolga-storage",
+]
+
+# Shared metadata. ADR 0001 §4 pins edition 2024, MSRV 1.85.0, and Rust stable.
+# ADR 0001 §6 makes the workspace version one compatibility surface among several; it does not
+# imply the schema version or any migration id.
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88.0"
+license = "MIT"
+repository = "https://github.com/jusso-dev/Brolga"
+homepage = "https://github.com/jusso-dev/Brolga"
+authors = ["Brolga contributors"]
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unreachable_pub = "warn"
+rust_2024_compatibility = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+# Deny the categories that hide correctness and denial-of-service problems in code that parses
+# untrusted intelligence. A panic on hostile input is a bug, not a diagnostic.
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+integer_division = "deny"
+as_conversions = "deny"
+cast_possible_truncation = "deny"
+cast_sign_loss = "deny"
+cast_precision_loss = "deny"
+todo = "deny"
+unimplemented = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+missing_panics_doc = "warn"
+missing_errors_doc = "warn"
+must_use_candidate = "warn"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

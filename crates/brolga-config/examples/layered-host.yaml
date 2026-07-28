@@ -1,0 +1,12 @@
+# A host-specific overlay, applied on top of a site-wide file.
+#
+# A layer only states what it changes. Everything else keeps the value from the
+# layer beneath it, and `brolga config explain` reports which layer won for each
+# setting.
+logging:
+  level: debug
+  format: json
+
+storage:
+  sqlite:
+    path: /var/lib/brolga/brolga.sqlite

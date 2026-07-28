@@ -1,0 +1,6 @@
+# The smallest useful Brolga configuration.
+#
+# Every setting not mentioned here comes from Brolga's built-in defaults. Run
+# `brolga config explain` to see the resolved value of every setting and which
+# layer supplied it.
+version: 1

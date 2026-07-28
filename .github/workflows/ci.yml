@@ -1,0 +1,263 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+# Least privilege, set at the workflow level so a new job cannot silently inherit more.
+# No job here writes to the repository, comments on a pull request, or publishes anything, so
+# read access to contents is the whole requirement. Any job that needs more must request it
+# explicitly at the job level and justify it in review.
+permissions:
+  contents: read
+
+# A pull request that is pushed to twice does not need the first run to finish. `main` is excluded
+# from cancellation, because a cancelled run on `main` leaves no record of whether that commit was
+# green.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail on any warning, everywhere, including dependencies' build scripts and rustdoc.
+  RUSTFLAGS: -D warnings
+  RUSTDOCFLAGS: -D warnings
+  # No incremental artefacts on a machine that is destroyed after the run; they cost more to write
+  # than they save.
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # ---------------------------------------------------------------------------------------------
+  # Fast feedback: cheap checks that catch most mistakes before the matrix spends three runners.
+  # ---------------------------------------------------------------------------------------------
+  format:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  lint:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      # `--all-targets` covers tests, benches, and examples, which is where lint debt hides.
+      # `--all-features` proves the optional features reserved by ADR 0001 §3 stay compilable.
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+
+  # ---------------------------------------------------------------------------------------------
+  # Cross-platform: ADR 0001 requires Linux, macOS, and Windows to be first-class, not aspirational.
+  # ---------------------------------------------------------------------------------------------
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Do not cancel macOS because Windows failed. A platform-specific failure is exactly what
+      # this matrix exists to find, and cancelling the others hides whether it is platform-specific.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: ${{ matrix.os }}
+
+      # Default features first, and separately. This is the build a user actually gets, and
+      # ADR 0001 §3 requires it to stay useful and lean; testing only `--all-features` would let
+      # the default build break without anyone noticing.
+      - name: Build default features
+        run: cargo build --locked --workspace
+
+      - name: Test default features
+        run: cargo test --locked --workspace
+
+      - name: Test all features
+        run: cargo test --locked --workspace --all-features
+
+      - name: Doc tests
+        run: cargo test --locked --workspace --all-features --doc
+
+  # ---------------------------------------------------------------------------------------------
+  # MSRV: ADR 0002 declares 1.88.0, amending ADR 0001 §4. A declared MSRV that nothing checks is a
+  # guess, and this job is what turns the number in `rust-version` into a fact.
+  # ---------------------------------------------------------------------------------------------
+  msrv:
+    name: MSRV 1.88.0
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: "1.88.0"
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: msrv
+      # `cargo check`, not `cargo build`: the question is whether the declared floor compiles the
+      # code, and dev-dependencies may legitimately need a newer compiler than the library does.
+      - run: cargo check --locked --workspace --all-features
+
+  # ---------------------------------------------------------------------------------------------
+  # Documentation must build without warnings, because a broken intra-doc link is a broken
+  # cross-reference in the only navigable form of the public API.
+  # ---------------------------------------------------------------------------------------------
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: docs
+      - run: cargo doc --locked --workspace --no-deps --all-features
+
+  # ---------------------------------------------------------------------------------------------
+  # Supply chain: licences, advisories, banned crates, and permitted sources, per ADR 0001 §7.
+  # ---------------------------------------------------------------------------------------------
+  supply-chain:
+    name: Licences and advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          # All four checks. `sources` is the one most often omitted and is the one that stops a
+          # git or patched dependency from entering the tree unnoticed.
+          #
+          # Severity lives in `deny.toml`, per check, rather than being forced here with
+          # `--deny warnings`. A blanket flag cannot distinguish "a crate is unmaintained" from
+          # "two proc-macro crates disagree about a `syn` major version", and the second is not
+          # something this repository can fix.
+          #
+          # An advisory database update is a moving target: pinning the action does not pin the
+          # data, so an advisory published today can fail a build that passed yesterday on an
+          # unchanged commit. That is intended. The alternative is shipping a known vulnerability
+          # quietly.
+          command: check licenses advisories bans sources
+
+  lockfile:
+    name: Lockfile is current
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      # `--locked` fails if the lockfile would need changing. This catches a manifest edit that was
+      # committed without its lockfile update, which would otherwise make every later `--locked`
+      # job fail for a reason unrelated to the change under review.
+      - run: cargo metadata --locked --format-version 1 > /dev/null
+
+  # ---------------------------------------------------------------------------------------------
+  # Smoke: prove the release profile builds and the shipped artefact actually runs.
+  #
+  # The release profile differs from debug in ways that break a working build: `lto`,
+  # `codegen-units = 1`, `strip`, and `panic = "abort"`. A binary that links is not a binary that
+  # starts, so this job runs it on every platform and checks a real command's behaviour.
+  # ---------------------------------------------------------------------------------------------
+  smoke:
+    name: Release smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: smoke-${{ matrix.os }}
+
+      # The release profile differs from debug in ways that break builds: `lto`, `codegen-units`,
+      # `strip`, and `panic = "abort"` are all set in the workspace manifest.
+      - name: Build release with default features
+        run: cargo build --locked --workspace --release
+
+      # The binary has to *run*, not merely link. A release build that aborts on start-up — a
+      # missing symbol, a broken `panic = "abort"` interaction, a platform-specific path bug —
+      # links perfectly and fails on first use.
+      - name: Smoke the binary
+        run: cargo run --locked --release --bin brolga -- --version
+
+      # And it has to do something. `--version` proves the process starts; `exit-codes` proves the
+      # command tree, the output modes, and the stdout/stderr split all survived the release
+      # profile's `lto`, `strip`, and `panic = "abort"`.
+      - name: Smoke a real command
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked --release --bin brolga -- --output json exit-codes > codes.json
+          grep -q '"not_implemented"' codes.json
+          echo "exit-code registry reported on stdout as JSON"
+
+      # An unimplemented command must fail rather than pretend to succeed. Checked on every
+      # platform, because "it exits 5" is the contract a pipeline depends on.
+      - name: Confirm unimplemented commands fail loudly
+        shell: bash
+        run: |
+          set +e
+          cargo run --locked --quiet --release --bin brolga -- ingest x > out.txt 2> err.txt
+          status=$?
+          set -e
+          test "$status" -eq 5 || { echo "expected exit 5, got $status" >&2; exit 1; }
+          test ! -s out.txt || { echo "an unimplemented command wrote to stdout" >&2; exit 1; }
+          grep -qi "not implemented" err.txt
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brolga-${{ matrix.os }}
+          path: |
+            target/release/brolga
+            target/release/brolga.exe
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------------------------
+  # One required check to configure in branch protection, so adding a job later does not require
+  # editing repository settings — and, more importantly, so a *skipped* job cannot be mistaken for
+  # a passing one. A skipped needs-dependency reports "skipped", which this job turns into a
+  # failure.
+  # ---------------------------------------------------------------------------------------------
+  ci-passed:
+    name: CI passed
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - format
+      - lint
+      - test
+      - msrv
+      - docs
+      - supply-chain
+      - lockfile
+      - smoke
+    steps:
+      - name: Fail unless every job succeeded
+        run: |
+          echo "Aggregated result: ${{ needs.*.result }}"
+          if [ "${{ contains(needs.*.result, 'failure') }}" = "true" ] \
+            || [ "${{ contains(needs.*.result, 'cancelled') }}" = "true" ] \
+            || [ "${{ contains(needs.*.result, 'skipped') }}" = "true" ]; then
+            echo "At least one required job did not succeed." >&2
+            exit 1
+          fi
