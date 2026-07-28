@@ -24,8 +24,14 @@ brolga-model = { version = "0.1.0", path = "../brolga-model" }
 # Raising the MSRV a second time in one milestone to satisfy a build script would be chasing the
 # ecosystem rather than making a decision. Revisit when the floor moves for a reason of its own.
 rusqlite = { version = "0.37", features = ["bundled"] }
+# Pure-Rust deflate backend on purpose. The C zlib backend would add a second C build to a
+# workspace that has already been bitten once by a transitive build script needing a newer
+# compiler than the declared MSRV (see ADR 0002), and cross-compiling three platforms in CI is
+# not the place to discover a third-party build script.
+flate2 = { version = "1.1.5", default-features = false, features = ["rust_backend"] }
 serde = "1.0.229"
 serde_json = "1.0.151"
+time = { version = "0.3.54", features = ["formatting"] }
 thiserror = "2.0.19"
 
 [dev-dependencies]

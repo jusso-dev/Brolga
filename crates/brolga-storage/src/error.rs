@@ -93,6 +93,34 @@ pub enum StorageError {
         reason: String,
     },
 
+    /// A source object was larger than the retention ceiling.
+    ///
+    /// Nothing is written when this is returned — not the blob, and not any canonical record in the
+    /// same transaction — so no reference to a missing blob can exist afterwards.
+    #[error(
+        "source object is {actual} bytes, over the {limit}-byte retention limit; \
+         nothing was written, so no canonical record references it"
+    )]
+    BlobTooLarge {
+        /// How large the object is.
+        actual: u64,
+        /// The configured ceiling.
+        limit: u64,
+    },
+
+    /// A retention class forbids removing this object.
+    #[error(
+        "source object {content_hash} is held under retention class {retention} and was not released: {reason}"
+    )]
+    RetentionRefused {
+        /// Which object.
+        content_hash: String,
+        /// The class that refused.
+        retention: &'static str,
+        /// Why the class forbids it.
+        reason: &'static str,
+    },
+
     /// A transaction could not be started, committed, or rolled back.
     #[error("transaction could not be {action}: {reason}")]
     Transaction {

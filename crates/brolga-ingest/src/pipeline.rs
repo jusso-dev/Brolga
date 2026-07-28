@@ -14,7 +14,9 @@ use brolga_model::{
     provenance::{MediaType, SourceOrigin},
 };
 use brolga_security::{CancellationToken, ResourceLimits};
-use brolga_storage::{IntelligenceStore, StoreWrite, UpsertOutcome};
+use brolga_storage::{
+    BlobOutcome, BlobRequest, IntelligenceStore, RetentionClass, StoreWrite, UpsertOutcome,
+};
 
 use crate::detect::FormatHint;
 use crate::error::{IngestError, Result};
@@ -112,6 +114,10 @@ pub struct IngestReport {
     pub unchanged: u64,
     /// Source objects written.
     pub source_objects: u64,
+    /// Original source objects whose bytes were retained for the first time.
+    pub retained_sources: u64,
+    /// Original source objects whose bytes were already retained.
+    pub deduplicated_sources: u64,
 }
 
 impl IngestReport {
@@ -136,13 +142,45 @@ impl IngestReport {
 pub struct Pipeline {
     registry: ParserRegistry,
     limits: ResourceLimits,
+    retention: Option<RetentionClass>,
 }
 
 impl Pipeline {
     /// Build a pipeline over a registry, with the given limits.
+    ///
+    /// Retains original source bytes under [`RetentionClass::Standard`]. Evidence retention is the
+    /// default because a canonical record whose source was discarded cannot be argued about later:
+    /// a disagreement with an upstream platform becomes unresolvable.
     #[must_use]
     pub const fn new(registry: ParserRegistry, limits: ResourceLimits) -> Self {
-        Self { registry, limits }
+        Self {
+            registry,
+            limits,
+            retention: Some(RetentionClass::Standard),
+        }
+    }
+
+    /// Set the retention class for original source bytes.
+    #[must_use]
+    pub const fn retaining(mut self, retention: RetentionClass) -> Self {
+        self.retention = Some(retention);
+        self
+    }
+
+    /// Ingest without retaining original bytes.
+    ///
+    /// For a caller that has already retained them, or that is deliberately processing without
+    /// keeping evidence. Named so that reading the call site makes the loss obvious.
+    #[must_use]
+    pub const fn without_retaining_sources(mut self) -> Self {
+        self.retention = None;
+        self
+    }
+
+    /// The retention class in force, if any.
+    #[must_use]
+    pub const fn retention(&self) -> Option<RetentionClass> {
+        self.retention
     }
 
     /// Build a pipeline with the safe default limits.
@@ -382,8 +420,31 @@ impl Pipeline {
             ..IngestReport::default()
         };
 
+        let retention = self.retention;
+        let originals = originals_for(documents);
+
         let counts = store.transaction(|writer| {
             let mut counts = Counts::default();
+
+            // Evidence first, inside the same transaction as everything derived from it. A
+            // canonical record that commits alongside a reference to bytes that were refused is a
+            // dangling reference nothing later can repair, so the refusal has to be able to take
+            // the whole batch with it.
+            if let Some(retention) = retention {
+                for (hash, bytes) in &originals {
+                    let request = BlobRequest::new(
+                        bytes,
+                        retention,
+                        format!("ingested source object {hash}"),
+                    );
+                    if writer.put_source_blob(&request)? == BlobOutcome::Deduplicated {
+                        counts.deduplicated_sources = counts.deduplicated_sources.saturating_add(1);
+                    } else {
+                        counts.retained_sources = counts.retained_sources.saturating_add(1);
+                    }
+                }
+            }
+
             for source in &sources {
                 writer.upsert_source_object(source)?;
                 counts.source_objects = counts.source_objects.saturating_add(1);
@@ -400,6 +461,8 @@ impl Pipeline {
         report.updated = counts.updated;
         report.unchanged = counts.unchanged;
         report.source_objects = counts.source_objects;
+        report.retained_sources = counts.retained_sources;
+        report.deduplicated_sources = counts.deduplicated_sources;
         Ok(report)
     }
 
@@ -439,6 +502,8 @@ struct Counts {
     updated: u64,
     unchanged: u64,
     source_objects: u64,
+    retained_sources: u64,
+    deduplicated_sources: u64,
 }
 
 impl Counts {
@@ -501,4 +566,21 @@ fn step(
         ShortText::new(algorithm)?,
         PIPELINE_VERSION,
     ))
+}
+
+/// The distinct original byte strings in a batch, keyed by address.
+///
+/// De-duplicated within the batch before the transaction opens: a feed offering the same file twice
+/// in one call addresses one blob, and issuing two writes for it would make the report say two
+/// things arrived when one did.
+fn originals_for(documents: &[Document<'_>]) -> Vec<(ContentHash, Vec<u8>)> {
+    let mut originals: Vec<(ContentHash, Vec<u8>)> = Vec::with_capacity(documents.len());
+    for document in documents {
+        let hash = ContentHash::of(document.bytes);
+        if !originals.iter().any(|(seen, _)| *seen == hash) {
+            originals.push((hash, document.bytes.to_vec()));
+        }
+    }
+    originals.sort_by_key(|(hash, _)| hash.to_string());
+    originals
 }
