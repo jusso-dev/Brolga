@@ -1,6 +1,6 @@
 # Brolga roadmap
 
-Status: `v0.1.0 — Foundation` is complete; `v0.2.0` has not started. GitHub milestones and issues are the source of work status.
+Status: `v0.1.0 — Foundation` is complete; `v0.2.0 — Core ingestion` is in progress — the parser registry and pipeline exist, no format parser does. GitHub milestones and issues are the source of work status.
 
 ## Release sequence
 
