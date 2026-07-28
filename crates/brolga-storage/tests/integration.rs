@@ -113,7 +113,13 @@ fn a_fresh_database_migrates_to_the_current_version() {
     let report = store.migrate().unwrap();
     assert_eq!(report.from_version, 0);
     assert_eq!(report.to_version, latest_version());
-    assert_eq!(report.applied, vec![1]);
+    // Derived, so appending a migration does not require editing this assertion — a test that has
+    // to be updated for every migration stops being a check and becomes a formality.
+    let expected: Vec<u32> = brolga_storage::MIGRATIONS
+        .iter()
+        .map(|migration| migration.id)
+        .collect();
+    assert_eq!(report.applied, expected);
     assert!(report.changed());
 }
 

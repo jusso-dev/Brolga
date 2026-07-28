@@ -62,11 +62,18 @@ CREATE TABLE IF NOT EXISTS brolga_schema_migrations (
 ///
 /// Appending is a compatible change. Editing or reordering an entry is breaking, and the checksum
 /// check turns that from a silent divergence into a failed start-up.
-pub const MIGRATIONS: &[Migration] = &[Migration {
-    id: 1,
-    name: "initial_schema",
-    sql: INITIAL_SCHEMA,
-}];
+pub const MIGRATIONS: &[Migration] = &[
+    Migration {
+        id: 1,
+        name: "initial_schema",
+        sql: INITIAL_SCHEMA,
+    },
+    Migration {
+        id: 2,
+        name: "source_blobs",
+        sql: SOURCE_BLOBS,
+    },
+];
 
 /// The highest migration identifier this build carries.
 #[must_use]
@@ -164,6 +171,43 @@ CREATE INDEX sightings_observer  ON sightings (observer);
 CREATE INDEX sightings_last_seen ON sightings (last_seen);
 ";
 
+/// Content-addressed retention of original source bytes, and the audit log of retention decisions.
+///
+/// Two deliberate omissions, both load-bearing:
+///
+/// **No foreign key to `source_objects`.** Deleting a canonical record must not destroy the
+/// evidence it was derived from; a cascade would make a routine cleanup silently remove the only
+/// proof of what a source published. The link runs the other way, from a canonical record's
+/// provenance to a content hash, and a blob outliving its records is a supported state.
+///
+/// **`source_blob_audit` has no foreign key either**, so that releasing a blob does not erase the
+/// record that it was released. An audit log that disappears with the thing it audits answers no
+/// question anybody asks afterwards.
+const SOURCE_BLOBS: &str = "\
+CREATE TABLE source_blobs (
+    content_hash    TEXT    NOT NULL PRIMARY KEY,
+    codec           TEXT    NOT NULL,
+    original_length INTEGER NOT NULL,
+    stored_length   INTEGER NOT NULL,
+    bytes           BLOB    NOT NULL,
+    retention       TEXT    NOT NULL,
+    stored_at       TEXT    NOT NULL
+) STRICT;
+
+CREATE INDEX source_blobs_retention ON source_blobs (retention);
+CREATE INDEX source_blobs_stored_at ON source_blobs (stored_at);
+
+CREATE TABLE source_blob_audit (
+    id           INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    content_hash TEXT    NOT NULL,
+    action       TEXT    NOT NULL,
+    reason       TEXT    NOT NULL,
+    at           TEXT    NOT NULL
+) STRICT;
+
+CREATE INDEX source_blob_audit_hash ON source_blob_audit (content_hash, id);
+";
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -234,9 +278,44 @@ mod tests {
         );
     }
 
+    /// Pinned like migration 0001's. A released migration is immutable under ADR 0001 §6, and a
+    /// checksum in a test is what turns that from a rule into a failing build.
+    #[test]
+    fn the_source_blobs_migration_checksum_is_pinned() {
+        let migration = MIGRATIONS
+            .iter()
+            .find(|migration| migration.id == 2)
+            .expect("migration 0002 exists");
+        assert_eq!(migration.name, "source_blobs");
+        assert_eq!(
+            migration.checksum().to_string(),
+            "sha256:53d26648abfed4aafbd89bcb81f7028d97d42944fb2ea13d15ea0103a0068f62",
+            "migration 0002 changed; append a new migration instead of editing a released one",
+        );
+    }
+
+    /// The two omitted foreign keys are the design. A cascade from `source_objects` would let a
+    /// canonical cleanup destroy the evidence, and one from the audit table would erase the record
+    /// that a blob was released at the moment it was released.
+    #[test]
+    fn retention_tables_carry_no_foreign_key_that_could_cascade() {
+        assert!(
+            !SOURCE_BLOBS.contains("REFERENCES"),
+            "a foreign key here would let canonical deletion destroy retained evidence",
+        );
+        assert!(SOURCE_BLOBS.contains("CREATE TABLE source_blobs"));
+        assert!(SOURCE_BLOBS.contains("CREATE TABLE source_blob_audit"));
+        assert_eq!(
+            SOURCE_BLOBS.matches("STRICT").count(),
+            2,
+            "both retention tables are STRICT, like every other table",
+        );
+    }
+
     #[test]
     fn latest_version_matches_the_highest_identifier() {
-        assert_eq!(latest_version(), 1);
+        // Derived from MIGRATIONS rather than hard-coded, so appending a migration does not
+        // require editing this test — which would make it a formality rather than a check.
         assert_eq!(
             latest_version(),
             MIGRATIONS

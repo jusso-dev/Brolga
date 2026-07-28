@@ -429,3 +429,126 @@ fn the_report_explains_which_parser_was_chosen_and_over_what() {
         report.selection
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Source-object retention (#16), the contract #13-#15 depend on
+// ---------------------------------------------------------------------------------------------
+
+/// Ingestion retains the original bytes by default. A canonical record whose source was discarded
+/// cannot be argued about later — a disagreement with an upstream platform becomes unresolvable.
+#[test]
+fn ingestion_retains_the_original_bytes_and_they_read_back_exactly() {
+    use brolga_model::ContentHash;
+
+    let bytes = b"entity:Alpha\nentity:Beta\n".to_vec();
+    let mut store = store();
+    let report = pipeline()
+        .ingest_batch(
+            &mut store,
+            &[document(&bytes)],
+            &CancellationToken::never_cancelled(),
+        )
+        .unwrap();
+
+    assert_eq!(report.retained_sources, 1);
+    let retrieved = store
+        .get_source_blob(&ContentHash::of(&bytes))
+        .unwrap()
+        .expect("the source bytes are retained");
+    assert_eq!(retrieved.bytes, bytes);
+}
+
+/// Re-importing the same file must not re-store it. A scheduled daily import would otherwise
+/// multiply the disk cost of retention by its frequency.
+#[test]
+fn re_ingesting_the_same_document_deduplicates_the_retained_bytes() {
+    let bytes = b"entity:Alpha\n".to_vec();
+    let mut store = store();
+
+    let first = pipeline()
+        .ingest_batch(
+            &mut store,
+            &[document(&bytes)],
+            &CancellationToken::never_cancelled(),
+        )
+        .unwrap();
+    let second = pipeline()
+        .ingest_batch(
+            &mut store,
+            &[document(&bytes)],
+            &CancellationToken::never_cancelled(),
+        )
+        .unwrap();
+
+    assert_eq!(first.retained_sources, 1);
+    assert_eq!(second.retained_sources, 0);
+    assert_eq!(second.deduplicated_sources, 1);
+    assert_eq!(store.source_blob_count().unwrap(), 1);
+}
+
+/// Discarding evidence has to be something the call site says out loud.
+#[test]
+fn a_pipeline_can_be_told_not_to_retain_and_then_retains_nothing() {
+    use brolga_model::ContentHash;
+
+    let bytes = b"entity:Alpha\n".to_vec();
+    let mut store = store();
+    let mut registry = ParserRegistry::new();
+    registry.register(TestRecordsParser::boxed());
+
+    let report = Pipeline::with_defaults(registry)
+        .without_retaining_sources()
+        .ingest_batch(
+            &mut store,
+            &[document(&bytes)],
+            &CancellationToken::never_cancelled(),
+        )
+        .unwrap();
+
+    assert_eq!(report.retained_sources, 0);
+    assert!(
+        store
+            .get_source_blob(&ContentHash::of(&bytes))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        store.count(RecordKind::Entity).unwrap(),
+        1,
+        "records still landed"
+    );
+}
+
+/// A refused blob must take the whole batch with it. The dangerous outcome is not the refusal —
+/// it is a canonical record committing beside a reference to evidence that was never written.
+#[test]
+fn evidence_refused_for_size_rolls_back_the_canonical_records_too() {
+    use brolga_storage::StorageError;
+
+    let bytes = b"entity:Alpha\nentity:Beta\n".to_vec();
+    let mut store = SqliteStore::open_in_memory()
+        .unwrap()
+        .with_max_blob_bytes(8);
+    store.migrate().unwrap();
+
+    let error = pipeline()
+        .ingest_batch(
+            &mut store,
+            &[document(&bytes)],
+            &CancellationToken::never_cancelled(),
+        )
+        .unwrap_err();
+
+    assert!(
+        matches!(
+            error,
+            IngestError::Storage {
+                source: StorageError::BlobTooLarge { .. }
+            }
+        ),
+        "got {error:?}"
+    );
+    assert_eq!(store.count(RecordKind::Entity).unwrap(), 0);
+    assert_eq!(store.count(RecordKind::SourceObject).unwrap(), 0);
+    assert_eq!(store.source_blob_count().unwrap(), 0);
+}
