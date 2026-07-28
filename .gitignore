@@ -1,0 +1,12 @@
+/target/
+**/*.rs.bk
+*.profraw
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+.DS_Store
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/

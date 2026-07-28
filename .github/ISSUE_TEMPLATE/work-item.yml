@@ -1,0 +1,55 @@
+name: Work item
+description: Propose scoped implementation work aligned with Brolga's roadmap.
+title: "[Work]: "
+labels:
+  - "type: feature"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Keep proposals evidence-preserving, deterministic by default, and bounded to Brolga's role as a threat-intelligence context engine.
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Outcome
+      description: What user-visible or architectural outcome should this deliver?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope
+      description: List concrete work included in this issue.
+    validations:
+      required: true
+  - type: textarea
+    id: non_goals
+    attributes:
+      label: Non-goals
+      description: State what this issue intentionally excludes.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: Provide independently verifiable completion criteria.
+      placeholder: |
+        - [ ] Behaviour is covered by tests.
+        - [ ] Public interfaces are documented and versioned.
+    validations:
+      required: true
+  - type: textarea
+    id: security
+    attributes:
+      label: Security and provenance impact
+      description: Describe handling of untrusted input, restrictions, evidence, and failure modes.
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: Link prerequisite issues or write "None".
+    validations:
+      required: true
