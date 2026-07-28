@@ -19,11 +19,23 @@ use brolga_model::observable::{
     CanonicalUrl, DomainName, EmailAddress, FileHash, HashAlgorithm, IpRange, MacAddress,
     Observable,
 };
+use brolga_model::provenance::{
+    ContentHash, Provenance, RecordOrigin, SourceObject, SyntheticOrigin, SyntheticReason,
+    TransformationChain, TransformationStage, TransformationStep,
+};
 use brolga_model::relationship::NodeRef;
 use brolga_model::status::Disposition;
 use brolga_model::temporal::Timestamp;
 use brolga_model::text::{ShortText, UntrustedText};
 use proptest::prelude::*;
+
+/// A synthetic origin for property tests.
+fn test_origin() -> RecordOrigin {
+    RecordOrigin::synthetic(SyntheticOrigin::new(
+        SyntheticReason::Fixture,
+        ShortText::new("brolga-model-property-tests").expect("valid creator"),
+    ))
+}
 
 /// A generator for syntactically valid DNS names.
 ///
@@ -209,8 +221,8 @@ proptest! {
         let subject = NodeRef::Observable(
             Observable::DomainName(DomainName::new(&domain).unwrap()).id(),
         );
-        let first = Claim::new(subject, Assertion::Disposition(disposition));
-        let second = Claim::new(subject, Assertion::Disposition(disposition));
+        let first = Claim::new(subject, Assertion::Disposition(disposition), test_origin());
+        let second = Claim::new(subject, Assertion::Disposition(disposition), test_origin());
         prop_assert_eq!(first.id, second.id);
 
         let json = serde_json::to_string(&first).unwrap();
@@ -231,8 +243,8 @@ proptest! {
 
         // Two entities with the same authority identifier are the same record whatever they are
         // called, and the roadmap forbids the converse: merging on name similarity.
-        let first = Entity::new(id, EntityKind::ThreatActor, UntrustedText::new(name_a).unwrap());
-        let second = Entity::new(id, EntityKind::ThreatActor, UntrustedText::new(name_b).unwrap());
+        let first = Entity::new(id, EntityKind::ThreatActor, UntrustedText::new(name_a).unwrap(), test_origin());
+        let second = Entity::new(id, EntityKind::ThreatActor, UntrustedText::new(name_b).unwrap(), test_origin());
         prop_assert_eq!(first.id, second.id);
 
         let json = serde_json::to_string(&first).unwrap();
@@ -279,5 +291,115 @@ proptest! {
         let _ = serde_json::from_str::<Claim>(&raw);
         let _ = serde_json::from_str::<brolga_model::relationship::Relationship>(&raw);
         let _ = serde_json::from_str::<brolga_model::sighting::Sighting>(&raw);
+    }
+}
+
+proptest! {
+    #[test]
+    fn content_hashing_is_deterministic_and_injective(
+        left in proptest::collection::vec(any::<u8>(), 0..512),
+        right in proptest::collection::vec(any::<u8>(), 0..512),
+    ) {
+        prop_assert_eq!(ContentHash::of(&left), ContentHash::of(&left));
+        if left != right {
+            prop_assert_ne!(ContentHash::of(&left), ContentHash::of(&right));
+        }
+    }
+
+    #[test]
+    fn content_hashes_round_trip_through_their_string_form(
+        bytes in proptest::collection::vec(any::<u8>(), 0..256),
+    ) {
+        let hash = ContentHash::of(&bytes);
+        let rendered = hash.to_string();
+        prop_assert!(rendered.starts_with("sha256:"));
+        prop_assert_eq!(ContentHash::parse(&rendered).unwrap(), hash);
+        prop_assert_eq!(
+            serde_json::from_str::<ContentHash>(&serde_json::to_string(&hash).unwrap()).unwrap(),
+            hash,
+        );
+    }
+
+    #[test]
+    fn source_objects_are_addressed_by_content_alone(
+        bytes in proptest::collection::vec(any::<u8>(), 0..256),
+    ) {
+        // Two imports of identical bytes must be one source object, whatever route they arrived by.
+        let hash = ContentHash::of(&bytes);
+        prop_assert_eq!(SourceObject::derive_id(hash), SourceObject::derive_id(hash));
+    }
+
+    #[test]
+    fn a_transformation_chain_fingerprint_ignores_the_clock(
+        versions in proptest::collection::vec(any::<u32>(), 1..8),
+        seconds in 0_i64..1_000_000_000,
+    ) {
+        let build = |stamped: bool| {
+            let steps = versions
+                .iter()
+                .map(|version| {
+                    let mut step = TransformationStep::new(
+                        TransformationStage::Enrichment,
+                        ShortText::new("brolga.enrich.x").unwrap(),
+                        *version,
+                    );
+                    if stamped {
+                        step.performed_at = Some(Timestamp::from_offset_date_time(
+                            time::OffsetDateTime::from_unix_timestamp(seconds).unwrap(),
+                        ));
+                    }
+                    step
+                })
+                .collect();
+            TransformationChain::new(steps).unwrap()
+        };
+
+        prop_assert_eq!(build(false).fingerprint(), build(true).fingerprint());
+    }
+
+    #[test]
+    fn provenance_round_trips_and_keeps_every_original(
+        originals in proptest::collection::vec(
+            ("[a-z][a-z0-9_.]{0,20}", "[a-zA-Z0-9 .,:;+_/@-]{0,60}"),
+            0..8,
+        ),
+    ) {
+        let source = SourceObject::derive_id(ContentHash::of(b"bundle"));
+        let chain = TransformationChain::new(vec![TransformationStep::new(
+            TransformationStage::Canonicalisation,
+            ShortText::new("brolga.canonicalise.x").unwrap(),
+            1,
+        )])
+        .unwrap();
+
+        let mut provenance = Provenance::from_source(source, chain).unwrap();
+        for (field, original) in &originals {
+            provenance
+                .record_original(
+                    &ShortText::new(field.clone()).unwrap(),
+                    UntrustedText::new(original.clone()).unwrap(),
+                )
+                .unwrap();
+        }
+
+        let json = serde_json::to_string(&provenance).unwrap();
+        let back: Provenance = serde_json::from_str(&json).unwrap();
+        prop_assert_eq!(&back, &provenance);
+
+        for (field, original) in &originals {
+            // Later duplicates of the same field name legitimately overwrite earlier ones, so only
+            // the last write for each key is asserted.
+            let expected = originals
+                .iter()
+                .rfind(|(candidate, _)| candidate == field)
+                .map(|(_, value)| value.as_str());
+            prop_assert_eq!(
+                back.original.get(field).map(|text| text.as_str()),
+                expected,
+                "original for {} was lost; wrote {}",
+                field,
+                original,
+            );
+        }
     }
 }

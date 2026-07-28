@@ -20,6 +20,7 @@ use crate::error::Result;
 use crate::id::{Id, Identifiable};
 use crate::marking::MarkingSet;
 use crate::observable::Observable;
+use crate::provenance::RecordOrigin;
 use crate::status::LifecycleStatus;
 use crate::temporal::TemporalState;
 use crate::text::UntrustedText;
@@ -174,6 +175,11 @@ pub struct Relationship {
     pub confidence: Option<ConfidenceBreakdown>,
     /// Handling restrictions. Always serialised, empty or not.
     pub markings: MarkingSet,
+    /// Where this record came from.
+    ///
+    /// Not an `Option`. A source-derived record carries mandatory provenance and a synthetic
+    /// one says who created it, so a record with no traceable origin is unrepresentable.
+    pub origin: RecordOrigin,
 }
 
 impl Identifiable for Relationship {
@@ -203,7 +209,12 @@ impl Relationship {
 
     /// Build a relationship with no optional metadata, deriving its identifier.
     #[must_use]
-    pub fn new(kind: RelationshipKind, source: NodeRef, target: NodeRef) -> Self {
+    pub fn new(
+        kind: RelationshipKind,
+        source: NodeRef,
+        target: NodeRef,
+        origin: RecordOrigin,
+    ) -> Self {
         Self {
             schema_version: SchemaTag::new(),
             id: Self::derive_id(kind, &source, &target),
@@ -215,6 +226,7 @@ impl Relationship {
             temporal: TemporalState::unknown(),
             confidence: None,
             markings: MarkingSet::empty(),
+            origin,
         }
     }
 
@@ -256,6 +268,7 @@ impl<'de> Deserialize<'de> for Relationship {
             temporal: TemporalState,
             confidence: Option<ConfidenceBreakdown>,
             markings: MarkingSet,
+            origin: RecordOrigin,
         }
 
         let raw = Raw::deserialize(deserializer)?;
@@ -270,6 +283,7 @@ impl<'de> Deserialize<'de> for Relationship {
             temporal: raw.temporal,
             confidence: raw.confidence,
             markings: raw.markings,
+            origin: raw.origin,
         }
         .validated()
         .map_err(D::Error::custom)
@@ -285,9 +299,19 @@ impl<'de> Deserialize<'de> for Relationship {
 )]
 mod tests {
     use super::*;
+    use crate::provenance::{SyntheticOrigin, SyntheticReason};
+    use crate::text::ShortText;
+
+    /// A synthetic origin for tests, so records under test declare where they came from without
+    /// dragging a whole provenance chain into every case that is about something else.
+    fn test_origin() -> RecordOrigin {
+        RecordOrigin::synthetic(SyntheticOrigin::new(
+            SyntheticReason::Fixture,
+            ShortText::new("brolga-model-tests").expect("valid creator"),
+        ))
+    }
     use crate::entity::EntityKind;
     use crate::observable::DomainName;
-    use crate::text::ShortText;
 
     fn entity_ref(external_id: &str) -> NodeRef {
         NodeRef::Entity(Entity::derive_id(
@@ -344,7 +368,7 @@ mod tests {
     #[test]
     fn a_node_cannot_relate_to_itself() {
         let node = entity_ref("A");
-        let self_edge = Relationship::new(RelationshipKind::Uses, node, node);
+        let self_edge = Relationship::new(RelationshipKind::Uses, node, node, test_origin());
         assert!(self_edge.validated().is_err());
     }
 
@@ -367,6 +391,7 @@ mod tests {
             RelationshipKind::Uses,
             entity_ref("A"),
             observable_ref("example.com"),
+            test_origin(),
         );
         let json = serde_json::to_string(&relationship).unwrap();
         let back: Relationship = serde_json::from_str(&json).unwrap();
@@ -375,8 +400,12 @@ mod tests {
 
     #[test]
     fn serialised_form_carries_schema_version_and_markings() {
-        let relationship =
-            Relationship::new(RelationshipKind::Targets, entity_ref("A"), entity_ref("B"));
+        let relationship = Relationship::new(
+            RelationshipKind::Targets,
+            entity_ref("A"),
+            entity_ref("B"),
+            test_origin(),
+        );
         let json = serde_json::to_value(&relationship).unwrap();
         assert_eq!(
             json.get("schema_version")
@@ -392,6 +421,7 @@ mod tests {
             RelationshipKind::Uses,
             entity_ref("A"),
             entity_ref("B"),
+            test_origin(),
         ))
         .unwrap();
 

@@ -21,6 +21,7 @@ use crate::confidence::ConfidenceBreakdown;
 use crate::error::Result;
 use crate::id::{Id, Identifiable};
 use crate::marking::MarkingSet;
+use crate::provenance::RecordOrigin;
 use crate::status::LifecycleStatus;
 use crate::temporal::TemporalState;
 use crate::text::{ShortText, UntrustedText};
@@ -120,6 +121,11 @@ pub struct Entity {
     pub confidence: Option<ConfidenceBreakdown>,
     /// Handling restrictions. Always serialised, empty or not.
     pub markings: MarkingSet,
+    /// Where this record came from.
+    ///
+    /// Not an `Option`. A source-derived record carries mandatory provenance and a synthetic
+    /// one says who created it, so a record with no traceable origin is unrepresentable.
+    pub origin: RecordOrigin,
 }
 
 impl Identifiable for Entity {
@@ -146,7 +152,7 @@ impl Entity {
 
     /// Build an entity with no optional metadata.
     #[must_use]
-    pub fn new(id: Id<Self>, kind: EntityKind, name: UntrustedText) -> Self {
+    pub fn new(id: Id<Self>, kind: EntityKind, name: UntrustedText, origin: RecordOrigin) -> Self {
         Self {
             schema_version: SchemaTag::new(),
             id,
@@ -158,6 +164,7 @@ impl Entity {
             temporal: TemporalState::unknown(),
             confidence: None,
             markings: MarkingSet::empty(),
+            origin,
         }
     }
 }
@@ -177,6 +184,7 @@ impl<'de> Deserialize<'de> for Entity {
             temporal: TemporalState,
             confidence: Option<ConfidenceBreakdown>,
             markings: MarkingSet,
+            origin: RecordOrigin,
         }
 
         let raw = Raw::deserialize(deserializer)?;
@@ -191,6 +199,7 @@ impl<'de> Deserialize<'de> for Entity {
             temporal: raw.temporal,
             confidence: raw.confidence,
             markings: raw.markings,
+            origin: raw.origin,
         }
         .validated()
         .map_err(D::Error::custom)
@@ -219,6 +228,16 @@ impl Entity {
 )]
 mod tests {
     use super::*;
+    use crate::provenance::{SyntheticOrigin, SyntheticReason};
+
+    /// A synthetic origin for tests, so records under test declare where they came from without
+    /// dragging a whole provenance chain into every case that is about something else.
+    fn test_origin() -> RecordOrigin {
+        RecordOrigin::synthetic(SyntheticOrigin::new(
+            SyntheticReason::Fixture,
+            ShortText::new("brolga-model-tests").expect("valid creator"),
+        ))
+    }
     use crate::confidence::ConfidenceScore;
     use crate::marking::{Marking, TlpLevel};
     use crate::temporal::Timestamp;
@@ -249,7 +268,12 @@ mod tests {
                 ConfidenceScore::new(80).unwrap(),
             )),
             markings: MarkingSet::from_iter_of([Marking::Tlp(TlpLevel::Green)]),
-            ..Entity::new(id, EntityKind::ThreatActor, untrusted("APT29"))
+            ..Entity::new(
+                id,
+                EntityKind::ThreatActor,
+                untrusted("APT29"),
+                test_origin(),
+            )
         }
     }
 
@@ -296,6 +320,7 @@ mod tests {
             Entity::derive_id(EntityKind::Tool, &short("vendor"), &short("t1")),
             EntityKind::Tool,
             untrusted("Example Tool"),
+            test_origin(),
         );
         let json = serde_json::to_value(&entity).unwrap();
 
@@ -359,6 +384,62 @@ mod tests {
             "valid_until": null,
         });
         assert!(serde_json::from_value::<Entity>(backwards_time).is_err());
+    }
+
+    #[test]
+    fn a_source_derived_record_carries_its_evidence_through_a_round_trip() {
+        use crate::provenance::{
+            ContentHash, Provenance, RecordOrigin, SourceObject, TransformationChain,
+            TransformationStage, TransformationStep,
+        };
+
+        let source = SourceObject::derive_id(ContentHash::of(b"{\"name\":\"APT29\"}"));
+        let chain = TransformationChain::new(vec![
+            TransformationStep::new(TransformationStage::Parsing, short("brolga.parse.json"), 1),
+            TransformationStep::new(
+                TransformationStage::Canonicalisation,
+                short("brolga.canonicalise.entity"),
+                1,
+            ),
+        ])
+        .unwrap();
+
+        let mut provenance = Provenance::from_source(source, chain).unwrap();
+        provenance
+            .record_original(&short("name"), untrusted("  APT29  "))
+            .unwrap();
+
+        let entity = Entity::new(
+            Entity::derive_id(
+                EntityKind::ThreatActor,
+                &short("mitre-attack"),
+                &short("G0016"),
+            ),
+            EntityKind::ThreatActor,
+            untrusted("APT29"),
+            RecordOrigin::source_derived(provenance),
+        );
+
+        let json = serde_json::to_string(&entity).unwrap();
+        let back: Entity = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, entity);
+
+        // The chain back to the evidence survives storage, which is the whole point.
+        assert!(back.origin.is_source_derived());
+        assert_eq!(back.origin.source_objects(), &[source]);
+        assert_eq!(
+            back.origin
+                .provenance()
+                .and_then(|provenance| provenance.original.get("name"))
+                .map(UntrustedText::as_str),
+            Some("  APT29  "),
+            "the source's exact bytes survive canonicalisation",
+        );
+        assert!(back.origin.provenance().is_some_and(|provenance| {
+            provenance
+                .chain
+                .includes(TransformationStage::Canonicalisation)
+        }),);
     }
 
     #[test]

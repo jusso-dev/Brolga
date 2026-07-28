@@ -22,6 +22,7 @@ use crate::entity::Entity;
 use crate::error::{ModelError, Result};
 use crate::id::{Id, Identifiable};
 use crate::marking::MarkingSet;
+use crate::provenance::RecordOrigin;
 use crate::relationship::NodeRef;
 use crate::status::LifecycleStatus;
 use crate::temporal::{TemporalState, Timestamp};
@@ -121,6 +122,11 @@ pub struct Sighting {
     pub confidence: Option<ConfidenceBreakdown>,
     /// Handling restrictions. Always serialised, empty or not.
     pub markings: MarkingSet,
+    /// Where this record came from.
+    ///
+    /// Not an `Option`. A source-derived record carries mandatory provenance and a synthetic
+    /// one says who created it, so a record with no traceable origin is unrepresentable.
+    pub origin: RecordOrigin,
 }
 
 impl Identifiable for Sighting {
@@ -166,6 +172,7 @@ impl Sighting {
         count: SightingCount,
         first_seen: Timestamp,
         last_seen: Timestamp,
+        origin: RecordOrigin,
     ) -> Result<Self> {
         Self {
             schema_version: SchemaTag::new(),
@@ -179,6 +186,7 @@ impl Sighting {
             temporal: TemporalState::unknown(),
             confidence: None,
             markings: MarkingSet::empty(),
+            origin,
         }
         .validated()
     }
@@ -219,6 +227,7 @@ impl<'de> Deserialize<'de> for Sighting {
             temporal: TemporalState,
             confidence: Option<ConfidenceBreakdown>,
             markings: MarkingSet,
+            origin: RecordOrigin,
         }
 
         let raw = Raw::deserialize(deserializer)?;
@@ -234,6 +243,7 @@ impl<'de> Deserialize<'de> for Sighting {
             temporal: raw.temporal,
             confidence: raw.confidence,
             markings: raw.markings,
+            origin: raw.origin,
         }
         .validated()
         .map_err(D::Error::custom)
@@ -249,6 +259,16 @@ impl<'de> Deserialize<'de> for Sighting {
 )]
 mod tests {
     use super::*;
+    use crate::provenance::{SyntheticOrigin, SyntheticReason};
+
+    /// A synthetic origin for tests, so records under test declare where they came from without
+    /// dragging a whole provenance chain into every case that is about something else.
+    fn test_origin() -> RecordOrigin {
+        RecordOrigin::synthetic(SyntheticOrigin::new(
+            SyntheticReason::Fixture,
+            ShortText::new("brolga-model-tests").expect("valid creator"),
+        ))
+    }
     use crate::entity::EntityKind;
     use crate::observable::{DomainName, Observable};
     use crate::text::ShortText;
@@ -333,6 +353,7 @@ mod tests {
             SightingCount::ONE,
             at("2024-01-02T00:00:00Z"),
             at("2024-01-01T00:00:00Z"),
+            test_origin(),
         )
         .unwrap_err();
         assert!(matches!(error, ModelError::TimeOrder { .. }), "{error:?}");
@@ -341,7 +362,17 @@ mod tests {
     #[test]
     fn a_single_instant_is_a_valid_window() {
         let instant = at("2024-01-01T00:00:00Z");
-        assert!(Sighting::new(subject(), None, SightingCount::ONE, instant, instant).is_ok());
+        assert!(
+            Sighting::new(
+                subject(),
+                None,
+                SightingCount::ONE,
+                instant,
+                instant,
+                test_origin()
+            )
+            .is_ok()
+        );
     }
 
     #[test]
@@ -352,6 +383,7 @@ mod tests {
             SightingCount::new(42).unwrap(),
             at("2024-01-01T00:00:00Z"),
             at("2024-01-02T00:00:00Z"),
+            test_origin(),
         )
         .unwrap();
         let json = serde_json::to_string(&sighting).unwrap();
@@ -367,6 +399,7 @@ mod tests {
             SightingCount::ONE,
             at("2024-01-01T00:00:00Z"),
             at("2024-01-01T00:00:00Z"),
+            test_origin(),
         )
         .unwrap();
         let json = serde_json::to_value(&sighting).unwrap();
@@ -388,6 +421,7 @@ mod tests {
                 SightingCount::ONE,
                 at("2024-01-01T00:00:00Z"),
                 at("2024-01-02T00:00:00Z"),
+                test_origin(),
             )
             .unwrap(),
         )

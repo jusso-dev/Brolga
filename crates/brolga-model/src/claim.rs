@@ -16,6 +16,7 @@ use crate::confidence::ConfidenceBreakdown;
 use crate::error::Result;
 use crate::id::{Id, Identifiable};
 use crate::marking::MarkingSet;
+use crate::provenance::RecordOrigin;
 use crate::relationship::NodeRef;
 use crate::status::{Disposition, LifecycleStatus};
 use crate::temporal::TemporalState;
@@ -100,6 +101,11 @@ pub struct Claim {
     pub confidence: Option<ConfidenceBreakdown>,
     /// Handling restrictions. Always serialised, empty or not.
     pub markings: MarkingSet,
+    /// Where this record came from.
+    ///
+    /// Not an `Option`. A source-derived record carries mandatory provenance and a synthetic
+    /// one says who created it, so a record with no traceable origin is unrepresentable.
+    pub origin: RecordOrigin,
 }
 
 impl Identifiable for Claim {
@@ -133,7 +139,7 @@ impl Claim {
 
     /// Build a claim with no optional metadata, deriving its identifier.
     #[must_use]
-    pub fn new(subject: NodeRef, assertion: Assertion) -> Self {
+    pub fn new(subject: NodeRef, assertion: Assertion, origin: RecordOrigin) -> Self {
         Self {
             schema_version: SchemaTag::new(),
             id: Self::derive_id(&subject, &assertion),
@@ -143,6 +149,7 @@ impl Claim {
             temporal: TemporalState::unknown(),
             confidence: None,
             markings: MarkingSet::empty(),
+            origin,
         }
     }
 
@@ -171,6 +178,7 @@ impl<'de> Deserialize<'de> for Claim {
             temporal: TemporalState,
             confidence: Option<ConfidenceBreakdown>,
             markings: MarkingSet,
+            origin: RecordOrigin,
         }
 
         let raw = Raw::deserialize(deserializer)?;
@@ -183,6 +191,7 @@ impl<'de> Deserialize<'de> for Claim {
             temporal: raw.temporal,
             confidence: raw.confidence,
             markings: raw.markings,
+            origin: raw.origin,
         }
         .validated()
         .map_err(D::Error::custom)
@@ -198,6 +207,16 @@ impl<'de> Deserialize<'de> for Claim {
 )]
 mod tests {
     use super::*;
+    use crate::provenance::{SyntheticOrigin, SyntheticReason};
+
+    /// A synthetic origin for tests, so records under test declare where they came from without
+    /// dragging a whole provenance chain into every case that is about something else.
+    fn test_origin() -> RecordOrigin {
+        RecordOrigin::synthetic(SyntheticOrigin::new(
+            SyntheticReason::Fixture,
+            ShortText::new("brolga-model-tests").expect("valid creator"),
+        ))
+    }
     use crate::observable::{DomainName, Observable};
 
     fn subject(domain: &str) -> NodeRef {
@@ -218,10 +237,12 @@ mod tests {
         let malicious = Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Malicious),
+            test_origin(),
         );
         let benign = Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Benign),
+            test_origin(),
         );
         assert_ne!(malicious.id, benign.id);
         assert_eq!(malicious.subject, benign.subject);
@@ -232,10 +253,12 @@ mod tests {
         let first = Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Malicious),
+            test_origin(),
         );
         let second = Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Malicious),
+            test_origin(),
         );
         assert_eq!(first.id, second.id);
     }
@@ -248,6 +271,7 @@ mod tests {
                 name: short("ab"),
                 value: untrusted("c"),
             },
+            test_origin(),
         );
         let a_bc = Claim::new(
             subject("example.com"),
@@ -255,6 +279,7 @@ mod tests {
                 name: short("a"),
                 value: untrusted("bc"),
             },
+            test_origin(),
         );
         assert_ne!(ab_c.id, a_bc.id);
     }
@@ -264,10 +289,12 @@ mod tests {
         let narrative = Claim::new(
             subject("example.com"),
             Assertion::Narrative(untrusted("malicious")),
+            test_origin(),
         );
         let disposition = Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Malicious),
+            test_origin(),
         );
         assert_ne!(narrative.id, disposition.id);
     }
@@ -277,10 +304,12 @@ mod tests {
         let one = Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Malicious),
+            test_origin(),
         );
         let two = Claim::new(
             subject("example.org"),
             Assertion::Disposition(Disposition::Malicious),
+            test_origin(),
         );
         assert_ne!(one.id, two.id);
     }
@@ -295,7 +324,7 @@ mod tests {
             },
             Assertion::Narrative(untrusted("Observed in a phishing campaign.\nSee report.")),
         ] {
-            let claim = Claim::new(subject("example.com"), assertion);
+            let claim = Claim::new(subject("example.com"), assertion, test_origin());
             let json = serde_json::to_string(&claim).unwrap();
             let back: Claim = serde_json::from_str(&json).unwrap();
             assert_eq!(back, claim);
@@ -307,6 +336,7 @@ mod tests {
         let mut claim = Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Malicious),
+            test_origin(),
         );
         claim.status = LifecycleStatus::Revoked;
 
@@ -325,6 +355,7 @@ mod tests {
         let claim = Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Unknown),
+            test_origin(),
         );
         let json = serde_json::to_value(&claim).unwrap();
         assert_eq!(
@@ -340,6 +371,7 @@ mod tests {
         let base = serde_json::to_value(Claim::new(
             subject("example.com"),
             Assertion::Disposition(Disposition::Malicious),
+            test_origin(),
         ))
         .unwrap();
 
