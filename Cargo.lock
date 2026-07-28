@@ -118,6 +118,7 @@ name = "brolga-config"
 version = "0.1.0"
 dependencies = [
  "brolga-model",
+ "brolga-security",
  "schemars",
  "serde",
  "serde_json",
@@ -139,6 +140,16 @@ dependencies = [
  "time",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "brolga-security"
+version = "0.1.0"
+dependencies = [
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror",
 ]
 
 [[package]]

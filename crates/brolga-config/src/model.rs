@@ -22,6 +22,8 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use brolga_security::limits::{Bounds as SecurityBounds, InputLimits};
+
 use crate::error::{ConfigError, ConfigPath, Diagnostics, preview};
 use crate::secret::SecretRef;
 
@@ -35,6 +37,10 @@ pub const CONFIG_VERSION: u16 = 1;
 pub const MAX_SECRETS: usize = 128;
 
 /// Bounds for a `u64` setting, used to keep the check and the diagnostic in one place.
+///
+/// Where a setting configures a limit that `brolga-security` also defines, the range comes from
+/// there via [`Bounds::from_security`] rather than being restated. Two copies of a limit's range
+/// drift, and the weaker one silently becomes the real one.
 struct Bounds {
     min: u64,
     max: u64,
@@ -43,6 +49,14 @@ struct Bounds {
 impl Bounds {
     const fn new(min: u64, max: u64) -> Self {
         Self { min, max }
+    }
+
+    /// Adopt a range that `brolga-security` owns.
+    const fn from_security(bounds: SecurityBounds) -> Self {
+        Self {
+            min: bounds.min,
+            max: bounds.max,
+        }
     }
 
     fn check(&self, path: &ConfigPath, value: u64, diagnostics: &mut Diagnostics) {
@@ -135,10 +149,29 @@ pub struct LimitsConfig {
 }
 
 impl LimitsConfig {
-    const MAX_INPUT_BYTES: Bounds = Bounds::new(1024, 1024 * 1024 * 1024);
-    const MAX_NESTING_DEPTH: Bounds = Bounds::new(1, 1024);
-    const MAX_RECORDS_PER_IMPORT: Bounds = Bounds::new(1, 100_000_000);
+    // The first three ranges belong to `brolga-security`, which is where parsers, archive readers,
+    // connectors, and the plugin host read them from. Restating them here would create a second
+    // copy that drifts.
+    const MAX_INPUT_BYTES: Bounds = Bounds::from_security(InputLimits::MAX_BYTES);
+    const MAX_NESTING_DEPTH: Bounds = Bounds::from_security(InputLimits::MAX_DEPTH);
+    const MAX_RECORDS_PER_IMPORT: Bounds = Bounds::from_security(InputLimits::MAX_RECORDS);
+    // Operation timeout is a Brolga-wide budget rather than a per-input limit, so it has no
+    // counterpart in `InputLimits`.
     const OPERATION_TIMEOUT_SECONDS: Bounds = Bounds::new(1, 86_400);
+
+    /// The shared input limits this configuration expresses.
+    ///
+    /// What a parser, archive reader, or connector is handed. `max_field_bytes` is not yet
+    /// operator-configurable, so it keeps its safe default; adding a setting later is additive.
+    #[must_use]
+    pub const fn to_input_limits(&self) -> InputLimits {
+        InputLimits {
+            max_bytes: self.max_input_bytes,
+            max_depth: self.max_nesting_depth,
+            max_records: self.max_records_per_import,
+            max_field_bytes: InputLimits::MAX_FIELD_BYTES.default,
+        }
+    }
 }
 
 /// Diagnostic output settings.
@@ -539,6 +572,66 @@ mod tests {
             );
         }
         assert!(config.validated().is_err());
+    }
+
+    #[test]
+    fn configured_limits_convert_to_the_shared_ones() {
+        // The configuration is what an operator edits; `InputLimits` is what a parser is handed.
+        // If these disagreed, the operator's setting would not be the one in force.
+        let mut config = defaults();
+        config.limits.max_input_bytes = 4096;
+        config.limits.max_nesting_depth = 8;
+        config.limits.max_records_per_import = 500;
+
+        let shared = config.limits.to_input_limits();
+        assert_eq!(shared.max_bytes, 4096);
+        assert_eq!(shared.max_depth, 8);
+        assert_eq!(shared.max_records, 500);
+        assert!(shared.validated().is_ok());
+    }
+
+    #[test]
+    fn the_configuration_range_is_the_security_crate_range() {
+        // One source of truth. Two copies of a limit's range drift, and the weaker one silently
+        // becomes the real one.
+        assert_eq!(
+            LimitsConfig::MAX_INPUT_BYTES.min,
+            InputLimits::MAX_BYTES.min
+        );
+        assert_eq!(
+            LimitsConfig::MAX_INPUT_BYTES.max,
+            InputLimits::MAX_BYTES.max
+        );
+        assert_eq!(
+            LimitsConfig::MAX_NESTING_DEPTH.max,
+            InputLimits::MAX_DEPTH.max
+        );
+        assert_eq!(
+            LimitsConfig::MAX_RECORDS_PER_IMPORT.max,
+            InputLimits::MAX_RECORDS.max,
+        );
+    }
+
+    #[test]
+    fn a_configuration_the_loader_accepts_produces_limits_the_security_crate_accepts() {
+        // The two validators must not disagree: a configuration that validates here and then fails
+        // deeper in the stack would be a start-up failure an operator cannot diagnose.
+        for value in [
+            InputLimits::MAX_BYTES.min,
+            InputLimits::MAX_BYTES.default,
+            InputLimits::MAX_BYTES.max,
+        ] {
+            let mut config = defaults();
+            config.limits.max_input_bytes = value;
+            assert!(
+                config.clone().validated().is_ok(),
+                "{value} rejected by config"
+            );
+            assert!(
+                config.limits.to_input_limits().validated().is_ok(),
+                "{value} accepted by config but rejected by brolga-security",
+            );
+        }
     }
 
     #[test]

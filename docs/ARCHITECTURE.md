@@ -66,7 +66,7 @@ milestone that first needs each one.
 
 Primary boundaries are imported content, archives, XML, mappings, connector URLs and responses, local API callers, network MCP callers, plugins, exporters, and optional model providers.
 
-Each boundary needs explicit size, time, depth, capability, redirect, address, credential, and output-policy controls. Detailed controls belong in threat-model and security-foundation issues.
+Each boundary needs explicit size, time, depth, capability, redirect, address, credential, and output-policy controls. Those controls, the attackers they defend against, and the residual risks are in [docs/THREAT-MODEL.md](THREAT-MODEL.md); the types that make them enforceable are in `brolga-security`.
 
 ## Determinism
 
