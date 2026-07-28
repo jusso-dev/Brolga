@@ -12,9 +12,32 @@
 
 ## Project status
 
-Planning and repository bootstrap are complete. Product implementation has not started.
+**`v0.1.0 — Foundation` is complete.** The foundations exist and are tested; the intelligence capabilities they exist to support do not yet.
 
-Work is organised as 59 scoped, dependency-aware [GitHub issues](https://github.com/jusso-dev/Brolga/issues) across eight release milestones. Each issue defines outcome, scope, acceptance criteria, dependencies, non-goals, and security and provenance impact. See the [roadmap](docs/ROADMAP.md) before proposing implementation.
+What works today:
+
+- A versioned canonical model — entities, observables, relationships, claims, sightings, markings, and confidence components — with JSON Schemas and round-trip tests.
+- A provenance model: content-addressed source objects, transformation chains carrying algorithm versions, evidence references, and the original values that canonicalisation replaced.
+- Layered YAML and JSON configuration with path-specific diagnostics, deterministic fingerprints, and secret *references* rather than secret values.
+- Transactional SQLite storage with checksum-verified migrations, WAL, and backend-neutral traits that accept no arbitrary SQL.
+- A `brolga` binary with a stable exit-code registry, a strict stdout/stderr split, and structured diagnostics.
+- Shared trust classification, resource limits, cancellation, and outbound network policy, backed by a [threat model](docs/THREAT-MODEL.md).
+- Cross-platform CI on Linux, macOS, and Windows, with licence, advisory, and supply-chain gates.
+
+What does not work yet: **ingestion, the intelligence graph, compression, context packs, the HTTP API, the MCP server, connectors, and plugins.** `brolga ingest` and `brolga context` exist as commands and exit `5`, naming the milestone that implements them, rather than pretending to succeed.
+
+Work continues as scoped, dependency-aware [GitHub issues](https://github.com/jusso-dev/Brolga/issues) across eight release milestones. Each defines outcome, scope, acceptance criteria, dependencies, non-goals, and security and provenance impact. See the [roadmap](docs/ROADMAP.md) before proposing implementation.
+
+## Try it
+
+```bash
+cargo build --release
+./target/release/brolga init
+./target/release/brolga config validate
+./target/release/brolga doctor
+```
+
+`brolga config explain` shows every resolved setting and which layer supplied it. `brolga exit-codes` prints the exit-code registry from the build you are running. See [docs/CLI.md](docs/CLI.md).
 
 ## Intent
 
@@ -92,16 +115,24 @@ Every pack is intended to include:
 
 Progressive disclosure will range from `L0` disposition through `L5` exact original source objects. Agents should start compact and request deeper evidence only when needed.
 
-## Planned properties
+## Properties
+
+Shipped in `v0.1.0`:
 
 - Self-contained Rust binary named `brolga`
-- Offline and deterministic operation without an LLM
+- Offline and deterministic operation without an LLM — no network client, no model provider, and no random or clock-based identifier anywhere in the canonical model
 - Strong canonical types for entities, observables, relationships, claims, sightings, provenance, and markings
-- Original source-object retention and auditable transformation chains
+- Auditable transformation chains recording algorithm versions, and the original values canonicalisation replaced
+- SQLite local mode
+- Stable Rust library interfaces for the crates above
+
+Planned, and not yet implemented:
+
+- Original source-object *retention* — the metadata and content addressing exist; storing and retrieving the bytes does not
 - Evidence-preserving structural compression under token, byte, object, depth, relationship, and time budgets
 - Progressive disclosure from disposition through original source objects
-- CLI, local HTTP API, MCP stdio server, and stable Rust library interfaces
-- SQLite local mode and PostgreSQL server mode
+- Local HTTP API and MCP stdio server
+- PostgreSQL server mode
 - Declarative mappings and profiles plus capability-limited WebAssembly plugins
 - Read-only upstream connectors by default
 
@@ -125,7 +156,7 @@ Brolga will not replace MISP, OpenCTI, a SIEM, a SOAR platform, case management,
 
 ## Architecture
 
-Planned boundaries and dependency rules live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Core parsing, modelling, provenance, storage, graph logic, policy, compression, and interfaces will remain loosely coupled through versioned Rust traits and schemas.
+Boundaries and dependency rules live in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), decided by [ADR 0001](docs/adr/0001-workspace-boundaries-and-public-interface-versioning.md). Core parsing, modelling, provenance, storage, graph logic, policy, compression, and interfaces will remain loosely coupled through versioned Rust traits and schemas.
 
 Default local mode will use SQLite. Server mode will add PostgreSQL without requiring a dedicated graph database. Trusted first-party code will use compile-time Rust traits; common operator changes will use declarative mappings and profiles; portable third-party extensions will use capability-limited WebAssembly.
 
@@ -145,7 +176,7 @@ No web frontend is planned for initial release.
 
 ## Implementation plan
 
-- [v0.1.0 Foundation](https://github.com/jusso-dev/Brolga/issues/1)
+- [v0.1.0 Foundation](https://github.com/jusso-dev/Brolga/issues/1) — **complete**
 - [v0.2.0 Core ingestion](https://github.com/jusso-dev/Brolga/issues/10)
 - [v0.3.0 Intelligence graph](https://github.com/jusso-dev/Brolga/issues/18)
 - [v0.4.0 Compression engine](https://github.com/jusso-dev/Brolga/issues/26)
@@ -162,7 +193,9 @@ Implementation is issue-driven. Read [CONTRIBUTING.md](CONTRIBUTING.md), select 
 
 ## Security
 
-Imported intelligence, archives, mappings, reports, connector responses, and plugins are untrusted input. Report vulnerabilities through GitHub private vulnerability reporting as described in [SECURITY.md](SECURITY.md).
+Imported intelligence, archives, mappings, reports, connector responses, and plugins are untrusted input. [docs/THREAT-MODEL.md](docs/THREAT-MODEL.md) records the boundaries, the controls, what is deliberately out of scope, and the residual risks.
+
+Report vulnerabilities through GitHub private vulnerability reporting as described in [SECURITY.md](SECURITY.md).
 
 ## Licence
 
