@@ -1,0 +1,137 @@
+# Dependency, licence, and supply-chain policy.
+#
+# The rules here implement ADR 0001 §7. This file is the enforcement; the ADR is the reasoning.
+# Changing a rule here without amending the ADR makes the two disagree, and the ADR wins.
+#
+# Run locally with:
+#   cargo deny check licenses advisories bans sources
+
+[graph]
+# Check every platform Brolga supports, not just the one the developer happens to be on. A crate
+# can pull a differently licensed or differently vulnerable dependency on Windows only, and a
+# host-only check would never see it.
+targets = [
+    { triple = "x86_64-unknown-linux-gnu" },
+    { triple = "aarch64-unknown-linux-gnu" },
+    { triple = "x86_64-apple-darwin" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-pc-windows-msvc" },
+]
+all-features = true
+
+[output]
+feature-depth = 1
+
+# -------------------------------------------------------------------------------------------------
+# Advisories
+# -------------------------------------------------------------------------------------------------
+[advisories]
+version = 2
+db-urls = ["https://github.com/rustsec/advisory-db"]
+
+# Exception process, per ADR 0001 §7. An entry here is a dated, expiring, reviewed decision, not a
+# way to make a build quiet. Each must record the advisory, the justification, the compensating
+# control, and a review date, and must be raised in its own pull request so it is reviewed on its
+# own merits rather than buried in a feature branch.
+#
+# Format:
+#   { id = "RUSTSEC-0000-0000", reason = "why unavoidable; compensating control; review by YYYY-MM-DD" }
+ignore = []
+
+# -------------------------------------------------------------------------------------------------
+# Licences
+# -------------------------------------------------------------------------------------------------
+[licenses]
+version = 2
+
+# Permissive, plus MPL-2.0 which is file-level copyleft and imposes no obligation when a crate is
+# used unmodified. Brolga ships under MIT and has to stay redistributable under it.
+#
+# Deliberately absent, with no exception path: GPL-2.0, GPL-3.0, AGPL-3.0, LGPL-2.1, LGPL-3.0,
+# SSPL-1.0, BUSL-1.1, and every non-OSI proprietary or source-available licence. cargo-deny denies
+# anything not on this list, so the prohibition needs no separate deny list to maintain.
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+# A crate whose licence text differs from the SPDX original needs a hash-pinned clarification, not
+# a blanket lower threshold.
+confidence-threshold = 0.93
+
+# Allow-listing a licence Brolga does not currently encounter is deliberate policy, not dead
+# configuration: the list states what is acceptable, so a new dependency under `ISC` is admitted by
+# review rather than by an emergency edit to this file.
+unused-allowed-license = "allow"
+
+# Per-crate exceptions, for a crate whose licence is acceptable only in a specific context.
+# Same review requirements as an advisory ignore.
+exceptions = []
+
+[licenses.private]
+# Brolga's own crates carry `license = "MIT"` from the workspace, so they are checked like any
+# other. This only affects crates marked `publish = false`.
+ignore = false
+
+# -------------------------------------------------------------------------------------------------
+# Bans
+# -------------------------------------------------------------------------------------------------
+[bans]
+# Two major versions of one crate in the tree is reported but does not fail the build. It is almost
+# always a transitive dependency mid-migration — at the time of writing, `syn` 2 and `syn` 3 both
+# appear through proc-macro crates we do not control — and failing on it would mean either blocking
+# on somebody else's release schedule or maintaining a `skip` list that hides real duplication as
+# well as unavoidable duplication.
+#
+# CI therefore does *not* pass `--deny warnings` to cargo-deny. Severity is set here, per check,
+# where it is reviewable, rather than by a blanket flag that cannot distinguish "a crate is
+# unmaintained" from "two proc-macro crates disagree about a `syn` major version".
+multiple-versions = "warn"
+
+# A wildcard version requirement gives up on reproducibility.
+wildcards = "deny"
+
+# `Cargo.lock` is committed and CI builds `--locked`, so an unused explicit dependency is dead
+# weight that still widens the attack surface.
+allow-wildcard-paths = false
+
+deny = [
+    # Deprecated in favour of the `time` crate, which this workspace already uses. Two date-time
+    # libraries in one tree means two sets of parsing rules and two sets of edge cases.
+    { crate = "chrono", reason = "use the `time` crate; two date-time libraries means two sets of parsing edge cases" },
+    # Superseded by `std::sync::LazyLock` on the declared MSRV.
+    #
+    # `wrappers` narrows the ban to first-party use: Brolga must not depend on it, and it is
+    # permitted where it arrives through `sharded-slab`, which `tracing-subscriber` pulls in and
+    # which we do not control. Removing the ban entirely would have been the easy fix and the wrong
+    # one — it would also stop catching a direct dependency added by hand.
+    { crate = "lazy_static", reason = "use std::sync::LazyLock, stable since Rust 1.80 and below our MSRV", wrappers = ["sharded-slab"] },
+    # An unmaintained crate is an unpatched crate.
+    { crate = "ansi_term", reason = "unmaintained" },
+    { crate = "atty", reason = "unmaintained; RUSTSEC-2021-0145" },
+]
+
+# Crates that may only appear as a dependency of a named crate, used to keep a heavyweight
+# transitive dependency from becoming a direct one by accident.
+skip = []
+skip-tree = []
+
+# -------------------------------------------------------------------------------------------------
+# Sources
+# -------------------------------------------------------------------------------------------------
+[sources]
+# crates.io only. ADR 0001 §7 prohibits git dependencies, patch sections, and vendored forks:
+# each of them makes the dependency tree unreviewable by anyone who does not already know it is
+# there, and none of them is visible in a published crate's metadata.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

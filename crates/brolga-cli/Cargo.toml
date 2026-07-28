@@ -1,0 +1,33 @@
+[package]
+name = "brolga-cli"
+description = "The brolga command-line interface"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "brolga"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+brolga-config = { version = "0.1.0", path = "../brolga-config" }
+brolga-model = { version = "0.1.0", path = "../brolga-model" }
+brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
+clap = { version = "4.6.4", features = ["derive"] }
+serde = "1.0.229"
+serde_json = "1.0.151"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["json", "env-filter", "fmt"] }
+uuid = { version = "1.24.0", features = ["v4"] }
+
+[dev-dependencies]
+serde_json = "1.0.151"
+tempfile = "3.27.0"

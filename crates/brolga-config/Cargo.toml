@@ -1,0 +1,27 @@
+[package]
+name = "brolga-config"
+description = "Layered, declarative, schema-validated configuration for Brolga"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories = ["config"]
+
+[lints]
+workspace = true
+
+[dependencies]
+brolga-model = { version = "0.1.0", path = "../brolga-model" }
+brolga-security = { version = "0.1.0", path = "../brolga-security" }
+schemars = "1.2.2"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+serde_path_to_error = "0.1.20"
+serde_yaml_ng = "0.10.0"
+thiserror = "2.0.19"
+
+[dev-dependencies]
+serde_yaml_ng = "0.10.0"
