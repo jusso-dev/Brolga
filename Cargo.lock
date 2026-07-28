@@ -128,6 +128,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "brolga-ingest"
+version = "0.1.0"
+dependencies = [
+ "brolga-ingest",
+ "brolga-model",
+ "brolga-security",
+ "brolga-storage",
+ "proptest",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
 name = "brolga-model"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,33 @@
+[package]
+name = "brolga-ingest"
+description = "Parser registry, format detection, and the auditable ingestion pipeline for Brolga"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories = ["parser-implementations"]
+
+[lints]
+workspace = true
+
+[features]
+# The reference parser used to test the pipeline without a real format. Off by default so it cannot
+# be registered in a shipped binary by accident; ADR 0003 §1 permits a test parser and nothing else
+# at this milestone.
+testing = []
+
+[dependencies]
+brolga-model = { version = "0.1.0", path = "../brolga-model" }
+brolga-security = { version = "0.1.0", path = "../brolga-security" }
+brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.19"
+
+[dev-dependencies]
+brolga-ingest = { path = ".", features = ["testing"] }
+brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
+proptest = "1.11.0"
+serde_json = "1.0.151"
