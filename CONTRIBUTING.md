@@ -4,7 +4,7 @@
 
 1. Select or open a GitHub issue.
 2. Confirm its milestone, dependencies, scope, non-goals, security impact, and acceptance criteria.
-3. Discuss public model, schema, ABI, storage, or policy changes before coding.
+3. Discuss public model, schema, ABI, storage, or policy changes before coding. Decisions that constrain later work are recorded in [docs/adr](docs/adr/README.md); read the accepted records before proposing a change that contradicts one.
 4. Avoid combining unrelated roadmap work.
 
 ## Engineering principles

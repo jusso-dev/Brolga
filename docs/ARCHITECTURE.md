@@ -21,6 +21,11 @@ Original source objects remain addressable throughout this flow. Compression cha
 
 ## Planned workspace boundaries
 
+This is the target layout for the finished product, not the starting point. The crates actually
+created in `v0.1.0`, their layers, and the rules for introducing the rest are fixed by
+[ADR 0001](adr/0001-workspace-boundaries-and-public-interface-versioning.md). Where the two
+disagree, the ADR wins.
+
 ```text
 crates/
   brolga-model          versioned canonical types and schemas
@@ -40,10 +45,15 @@ crates/
   brolga-test-support   fixtures, builders, and deterministic harnesses
 ```
 
-Final crate boundaries require an architecture decision in milestone `v0.1.0`.
+Final crate boundaries required an architecture decision in milestone `v0.1.0`. That decision is
+[ADR 0001](adr/0001-workspace-boundaries-and-public-interface-versioning.md), which creates seven
+crates for `v0.1.0` — `brolga-model`, `brolga-security`, `brolga-config`, `brolga-storage`,
+`brolga-core`, `brolga-cli`, and `brolga-test-support` — and introduces the remainder in the
+milestone that first needs each one.
 
 ## Dependency rules
 
+- Crates occupy numbered layers and may depend only on strictly lower layers, which makes dependency cycles structurally impossible. Layer assignments are in [ADR 0001](adr/0001-workspace-boundaries-and-public-interface-versioning.md).
 - Source adapters depend on canonical interfaces; canonical types never depend on STIX, MISP, TAXII, or vendor models.
 - Storage, token estimation, policy, parsing, scoring, compression, and export use explicit traits.
 - Interface crates call application services; they do not reimplement intelligence decisions.
