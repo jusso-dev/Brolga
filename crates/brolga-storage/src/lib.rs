@@ -98,11 +98,16 @@
 
 #![forbid(unsafe_code)]
 
+pub mod blob;
 pub mod error;
 pub mod migration;
 pub mod sqlite;
 pub mod store;
 
+pub use blob::{
+    BlobCodec, BlobMetadata, BlobOutcome, BlobRequest, DEFAULT_MAX_BLOB_BYTES, RetentionAction,
+    RetentionClass, RetentionEvent, RetrievedBlob,
+};
 pub use error::StorageError;
 pub use migration::{MIGRATIONS, Migration, latest_version};
 pub use sqlite::{SqliteStore, StorePath};

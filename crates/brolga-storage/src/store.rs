@@ -32,6 +32,9 @@ use brolga_model::provenance::{ContentHash, SourceObject};
 use brolga_model::relationship::{NodeRef, Relationship};
 use brolga_model::sighting::Sighting;
 
+use crate::blob::{
+    BlobMetadata, BlobOutcome, BlobRequest, RetentionClass, RetentionEvent, RetrievedBlob,
+};
 use crate::error::Result;
 
 /// What an upsert did.
@@ -293,6 +296,50 @@ pub trait StoreRead {
     /// Returns a [`StorageError`](crate::error::StorageError) if the query fails or a stored
     /// document cannot be decoded.
     fn sightings_of(&self, subject: &NodeRef, page: Page) -> Result<Vec<Sighting>>;
+
+    /// Read a retained source object's original bytes back.
+    ///
+    /// The digest is recomputed and compared to the address before the bytes are returned, so a
+    /// corrupted row surfaces as an error rather than as plausible bytes. That check is here, in
+    /// the only path that hands bytes to a caller, rather than left to each caller to remember.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Corrupt`] if the stored bytes do not decode, or no longer hash to the
+    /// address they were fetched from. [`crate::StorageError::Query`] for a backend failure.
+    fn get_source_blob(&self, content_hash: &ContentHash) -> Result<Option<RetrievedBlob>>;
+
+    /// What is known about a retained object without reading its bytes.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure, [`crate::StorageError::Corrupt`] for a row whose
+    /// codec or retention class this build does not recognise.
+    fn source_blob_metadata(&self, content_hash: &ContentHash) -> Result<Option<BlobMetadata>>;
+
+    /// Every retention decision recorded for an address, oldest first.
+    ///
+    /// Returns events for an address whose blob has since been released, which is the case the
+    /// audit log exists for.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn source_blob_audit(&self, content_hash: &ContentHash) -> Result<Vec<RetentionEvent>>;
+
+    /// How many objects are retained.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn source_blob_count(&self) -> Result<u64>;
+
+    /// Total bytes occupied by retained objects, after encoding.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn source_blob_stored_bytes(&self) -> Result<u64>;
 }
 
 /// Writing canonical records, inside a transaction.
@@ -334,6 +381,44 @@ pub trait StoreWrite {
     ///
     /// Returns a [`StorageError`](crate::error::StorageError) if the write fails.
     fn upsert_sighting(&mut self, sighting: &Sighting) -> Result<UpsertOutcome>;
+
+    /// Retain an original source object, addressed by its own digest.
+    ///
+    /// Byte-identical objects store once: a second request for bytes already present returns
+    /// [`BlobOutcome::Deduplicated`] and writes nothing. This is on [`StoreWrite`] rather than on a
+    /// store of its own so that evidence and the canonical records derived from it commit in **one
+    /// transaction** — a canonical record referencing a blob that was never written is a dangling
+    /// reference nothing later can repair.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::BlobTooLarge`] if the object is over the configured ceiling, in which case
+    /// nothing is written and no reference exists to dangle. [`crate::StorageError::Query`] for a backend
+    /// failure.
+    fn put_source_blob(&mut self, request: &BlobRequest<'_>) -> Result<BlobOutcome>;
+
+    /// Remove a retained object deliberately, recording why.
+    ///
+    /// Returns `false` if nothing was retained at that address. The audit entry is written either
+    /// way: "somebody tried to release evidence that was not there" is worth being able to see.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::RetentionRefused`] if the blob's retention class forbids removal.
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn release_source_blob(&mut self, content_hash: &ContentHash, reason: &str) -> Result<bool>;
+
+    /// Change a retained object's retention class, recording why.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn reclassify_source_blob(
+        &mut self,
+        content_hash: &ContentHash,
+        retention: RetentionClass,
+        reason: &str,
+    ) -> Result<bool>;
 }
 
 /// A complete storage backend.
