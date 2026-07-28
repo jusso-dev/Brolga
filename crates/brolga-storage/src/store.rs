@@ -36,6 +36,7 @@ use crate::blob::{
     BlobMetadata, BlobOutcome, BlobRequest, RetentionClass, RetentionEvent, RetrievedBlob,
 };
 use crate::error::Result;
+use crate::quarantine::{QuarantineEntry, QuarantineRecord};
 
 /// What an upsert did.
 ///
@@ -327,6 +328,31 @@ pub trait StoreRead {
     /// [`crate::StorageError::Query`] for a backend failure.
     fn source_blob_audit(&self, content_hash: &ContentHash) -> Result<Vec<RetentionEvent>>;
 
+    /// Every quarantined record for one source, most recent first.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure, [`crate::StorageError::Corrupt`] for a
+    /// row whose stage this build does not recognise.
+    fn quarantined_for_source(&self, source_hash: &ContentHash) -> Result<Vec<QuarantineRecord>>;
+
+    /// How many distinct rejections are quarantined.
+    ///
+    /// Distinct, not total: a broken feed re-imported nightly is one problem, not thirty.
+    /// [`Self::quarantine_occurrences`] is the other number.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn quarantine_count(&self) -> Result<u64>;
+
+    /// How many rejection *events* are quarantined, counting repeats.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn quarantine_occurrences(&self) -> Result<u64>;
+
     /// How many objects are retained.
     ///
     /// # Errors
@@ -407,6 +433,17 @@ pub trait StoreWrite {
     /// [`crate::StorageError::RetentionRefused`] if the blob's retention class forbids removal.
     /// [`crate::StorageError::Query`] for a backend failure.
     fn release_source_blob(&mut self, content_hash: &ContentHash, reason: &str) -> Result<bool>;
+
+    /// Record a rejected record so it can be inspected rather than lost.
+    ///
+    /// Re-offering the same rejection updates the existing row and increments its occurrence count
+    /// instead of appending, because a quarantine that grows on every retry of a broken feed is one
+    /// nobody reads. Returns `true` when this rejection was seen for the first time.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn quarantine(&mut self, entry: &QuarantineEntry) -> Result<bool>;
 
     /// Change a retained object's retention class, recording why.
     ///

@@ -106,6 +106,47 @@ pub struct ParseOutput {
     /// A skipped record, an unrecognised optional field, a value that was truncated to fit a limit.
     /// Notes do not fail ingestion; they are why a successful ingest can still be worth reading.
     pub notes: Vec<ShortText>,
+    /// Records this parser could read the shape of but could not accept.
+    ///
+    /// Returning these rather than failing the whole document is what makes permissive ingestion
+    /// possible: one malformed row in a hundred thousand should not discard the other 99,999, and a
+    /// parser that can only say "the document failed" forces exactly that. A parser that genuinely
+    /// cannot read the document at all still returns [`ParseError`] instead.
+    pub rejected: Vec<RejectedRecord>,
+}
+
+/// One record a parser read but could not accept.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RejectedRecord {
+    /// A stable machine-readable category, for grouping and for policy.
+    ///
+    /// `&'static str` for the same reason detection reasons are: a category interpolated from the
+    /// document would put untrusted bytes somewhere a caller may branch on.
+    pub reason_kind: &'static str,
+    /// The full diagnostic, for a human.
+    pub reason: String,
+    /// Byte offset into the document, where the parser identified one.
+    pub offset: Option<u64>,
+    /// The offending text, as the parser saw it. Sanitised before it is stored.
+    pub fragment: Option<String>,
+}
+
+impl RejectedRecord {
+    /// A rejection at a known byte offset.
+    #[must_use]
+    pub fn at(
+        offset: u64,
+        reason_kind: &'static str,
+        reason: impl Into<String>,
+        fragment: impl Into<String>,
+    ) -> Self {
+        Self {
+            reason_kind,
+            reason: reason.into(),
+            offset: Some(offset),
+            fragment: Some(fragment.into()),
+        }
+    }
 }
 
 impl ParseOutput {
@@ -115,6 +156,7 @@ impl ParseOutput {
         Self {
             records,
             notes: Vec::new(),
+            rejected: Vec::new(),
         }
     }
 }

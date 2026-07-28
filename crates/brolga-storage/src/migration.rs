@@ -73,6 +73,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "source_blobs",
         sql: SOURCE_BLOBS,
     },
+    Migration {
+        id: 3,
+        name: "quarantine",
+        sql: QUARANTINE,
+    },
 ];
 
 /// The highest migration identifier this build carries.
@@ -206,6 +211,39 @@ CREATE TABLE source_blob_audit (
 ) STRICT;
 
 CREATE INDEX source_blob_audit_hash ON source_blob_audit (content_hash, id);
+";
+
+/// Records that could not be accepted, kept so they can be inspected rather than lost.
+///
+/// Keyed by a deterministic digest of what was rejected and why, so re-offering the same bad record
+/// updates one row instead of growing the table on every retry — a quarantine that doubles in size
+/// each time a broken feed is re-imported is one nobody can read.
+///
+/// `source_hash` is the address of the retained original, which is why the two features arrived
+/// together: a quarantined record whose source was not kept cannot be diagnosed, only counted.
+/// There is no foreign key to `source_blobs`, for the same reason `source_blobs` has none to
+/// `source_objects` — releasing evidence under a retention policy must not silently delete the
+/// record that something was rejected.
+const QUARANTINE: &str = "\
+CREATE TABLE quarantine (
+    id             TEXT    NOT NULL PRIMARY KEY,
+    source_hash    TEXT    NOT NULL,
+    parser         TEXT    NOT NULL,
+    parser_version INTEGER NOT NULL,
+    stage          TEXT    NOT NULL,
+    reason_kind    TEXT    NOT NULL,
+    reason         TEXT    NOT NULL,
+    record_index   INTEGER,
+    byte_offset    INTEGER,
+    fragment       TEXT,
+    first_seen_at  TEXT    NOT NULL,
+    last_seen_at   TEXT    NOT NULL,
+    occurrences    INTEGER NOT NULL
+) STRICT;
+
+CREATE INDEX quarantine_source  ON quarantine (source_hash);
+CREATE INDEX quarantine_parser  ON quarantine (parser, stage);
+CREATE INDEX quarantine_last_at ON quarantine (last_seen_at);
 ";
 
 #[cfg(test)]

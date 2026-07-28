@@ -80,8 +80,10 @@ pub mod testing;
 pub use canon::{CanonError, Canonical};
 pub use detect::{Candidate, DetectionConfidence, FormatHint};
 pub use error::{IngestError, ParseError, Result};
-pub use parser::{IntelligenceParser, ParseContext, ParseOutput, ParsedRecord, ParserId};
+pub use parser::{
+    IntelligenceParser, ParseContext, ParseOutput, ParsedRecord, ParserId, RejectedRecord,
+};
 pub use pipeline::{
-    Document, DocumentReport, IngestReport, PIPELINE_VERSION, Pipeline, StageMetrics,
+    Document, DocumentReport, IngestMode, IngestReport, PIPELINE_VERSION, Pipeline, StageMetrics,
 };
 pub use registry::{ParserRegistry, Selection};
