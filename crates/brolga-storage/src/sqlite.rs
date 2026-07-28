@@ -35,6 +35,10 @@ use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::blob::{
+    BlobCodec, BlobMetadata, BlobOutcome, BlobRequest, RetentionAction, RetentionClass,
+    RetentionEvent, RetrievedBlob, decode_bytes, encode_bytes,
+};
 use crate::error::{Result, StorageError};
 use crate::migration::{MIGRATIONS, MIGRATIONS_TABLE, latest_version};
 use crate::store::{
@@ -49,6 +53,7 @@ pub const DEFAULT_BUSY_TIMEOUT_MS: u64 = 5000;
 pub struct SqliteStore {
     connection: Connection,
     path: StorePath,
+    max_blob_bytes: u64,
 }
 
 /// Where a store lives.
@@ -89,6 +94,7 @@ impl SqliteStore {
         let store = Self {
             connection,
             path: StorePath::File(path.to_path_buf()),
+            max_blob_bytes: crate::blob::DEFAULT_MAX_BLOB_BYTES,
         };
         store.configure(busy_timeout_ms)?;
         Ok(store)
@@ -108,6 +114,7 @@ impl SqliteStore {
         let store = Self {
             connection,
             path: StorePath::Memory,
+            max_blob_bytes: crate::blob::DEFAULT_MAX_BLOB_BYTES,
         };
         store.configure(DEFAULT_BUSY_TIMEOUT_MS)?;
         Ok(store)
@@ -117,6 +124,23 @@ impl SqliteStore {
     #[must_use]
     pub const fn path(&self) -> &StorePath {
         &self.path
+    }
+
+    /// Set the largest source object this store will retain.
+    ///
+    /// A ceiling, not a target. Beyond it [`put_source_blob`](StoreWrite::put_source_blob) fails
+    /// and writes nothing, so a batch that would have exceeded it leaves no canonical record
+    /// pointing at evidence that was never stored.
+    #[must_use]
+    pub const fn with_max_blob_bytes(mut self, max_blob_bytes: u64) -> Self {
+        self.max_blob_bytes = max_blob_bytes;
+        self
+    }
+
+    /// The largest source object this store will retain.
+    #[must_use]
+    pub const fn max_blob_bytes(&self) -> u64 {
+        self.max_blob_bytes
     }
 
     /// Apply the connection settings documented at the top of this module.
@@ -182,6 +206,15 @@ impl SqliteStore {
         self.connection
             .query_row("PRAGMA busy_timeout", [], |row| row.get(0))
             .map_err(|error| StorageError::query("reading the busy timeout", error))
+    }
+
+    /// Read a single non-negative count, for the aggregate queries that return one.
+    fn scalar(&self, sql: &str) -> Result<u64> {
+        let value: i64 = self
+            .connection
+            .query_row(sql, [], |row| row.get(0))
+            .map_err(|error| StorageError::query("counting retained source blobs", error))?;
+        Ok(u64::try_from(value).unwrap_or(0))
     }
 
     fn fetch<T: DeserializeOwned>(
@@ -420,6 +453,148 @@ impl StoreRead for SqliteStore {
             ],
         )
     }
+
+    fn get_source_blob(&self, content_hash: &ContentHash) -> Result<Option<RetrievedBlob>> {
+        let address = content_hash.to_string();
+        let row = self
+            .connection
+            .query_row(
+                "SELECT codec, original_length, stored_length, retention, stored_at, bytes
+                 FROM source_blobs WHERE content_hash = ?1",
+                params![address],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                        row.get::<_, Vec<u8>>(5)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| StorageError::query("reading a source blob", error))?;
+
+        let Some((codec, original_length, stored_length, retention, stored_at, stored)) = row
+        else {
+            return Ok(None);
+        };
+        let metadata = build_metadata(
+            *content_hash,
+            &codec,
+            original_length,
+            stored_length,
+            &retention,
+            stored_at,
+        )?;
+
+        let bytes = decode_bytes(metadata.codec, &stored).ok_or_else(|| StorageError::Corrupt {
+            kind: "source_blob",
+            id: address.clone(),
+            reason: format!("stored bytes do not decode as {}", metadata.codec),
+        })?;
+
+        let retrieved = RetrievedBlob { metadata, bytes };
+
+        // The check that makes content addressing mean something. A row whose bytes no longer hash
+        // to the address they were fetched from is corrupt, and returning them would hand a caller
+        // evidence that is not the evidence it asked for.
+        if !retrieved.integrity_holds() {
+            return Err(StorageError::Corrupt {
+                kind: "source_blob",
+                id: address,
+                reason: "stored bytes no longer hash to the address they are filed under"
+                    .to_owned(),
+            });
+        }
+
+        Ok(Some(retrieved))
+    }
+
+    fn source_blob_metadata(&self, content_hash: &ContentHash) -> Result<Option<BlobMetadata>> {
+        let address = content_hash.to_string();
+        let row = self
+            .connection
+            .query_row(
+                "SELECT codec, original_length, stored_length, retention, stored_at
+                 FROM source_blobs WHERE content_hash = ?1",
+                params![address],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)?,
+                        row.get::<_, i64>(2)?,
+                        row.get::<_, String>(3)?,
+                        row.get::<_, String>(4)?,
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|error| StorageError::query("reading source blob metadata", error))?;
+
+        row.map(
+            |(codec, original_length, stored_length, retention, stored_at)| {
+                build_metadata(
+                    *content_hash,
+                    &codec,
+                    original_length,
+                    stored_length,
+                    &retention,
+                    stored_at,
+                )
+            },
+        )
+        .transpose()
+    }
+
+    fn source_blob_audit(&self, content_hash: &ContentHash) -> Result<Vec<RetentionEvent>> {
+        let address = content_hash.to_string();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT action, reason, at FROM source_blob_audit
+                 WHERE content_hash = ?1 ORDER BY id ASC",
+            )
+            .map_err(|error| StorageError::query("preparing a retention audit query", error))?;
+
+        let rows = statement
+            .query_map(params![address], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            })
+            .map_err(|error| StorageError::query("reading a retention audit", error))?;
+
+        let mut events = Vec::new();
+        for row in rows {
+            let (action, reason, at) =
+                row.map_err(|error| StorageError::query("reading a retention audit row", error))?;
+            let action =
+                RetentionAction::from_str_opt(&action).ok_or_else(|| StorageError::Corrupt {
+                    kind: "source_blob_audit",
+                    id: address.clone(),
+                    reason: format!("unknown retention action {action:?}"),
+                })?;
+            events.push(RetentionEvent {
+                content_hash: *content_hash,
+                action,
+                reason,
+                at,
+            });
+        }
+        Ok(events)
+    }
+
+    fn source_blob_count(&self) -> Result<u64> {
+        self.scalar("SELECT COUNT(*) FROM source_blobs")
+    }
+
+    fn source_blob_stored_bytes(&self) -> Result<u64> {
+        self.scalar("SELECT COALESCE(SUM(stored_length), 0) FROM source_blobs")
+    }
 }
 
 impl IntelligenceStore for SqliteStore {
@@ -527,6 +702,7 @@ impl IntelligenceStore for SqliteStore {
     }
 
     fn transaction<R>(&mut self, work: impl FnOnce(&mut dyn StoreWrite) -> Result<R>) -> Result<R> {
+        let max_blob_bytes = self.max_blob_bytes;
         let transaction =
             self.connection
                 .transaction()
@@ -535,7 +711,10 @@ impl IntelligenceStore for SqliteStore {
                     reason: error.to_string(),
                 })?;
 
-        let mut writer = SqliteWriter { transaction };
+        let mut writer = SqliteWriter {
+            transaction,
+            max_blob_bytes,
+        };
         match work(&mut writer) {
             Ok(value) => {
                 writer
@@ -560,9 +739,25 @@ impl IntelligenceStore for SqliteStore {
 /// The writer handed to a transaction's closure.
 struct SqliteWriter<'connection> {
     transaction: Transaction<'connection>,
+    max_blob_bytes: u64,
 }
 
 impl SqliteWriter<'_> {
+    /// Append one retention decision.
+    ///
+    /// Every path that stores, refuses, releases, or reclassifies calls this. A retention decision
+    /// that is not recorded is indistinguishable afterwards from one nobody made.
+    fn audit(&self, address: &str, action: RetentionAction, reason: &str) -> Result<()> {
+        self.transaction
+            .execute(
+                "INSERT INTO source_blob_audit (content_hash, action, reason, at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![address, action.as_str(), reason, now_rfc3339()],
+            )
+            .map_err(|error| StorageError::query("recording a retention decision", error))?;
+        Ok(())
+    }
+
     /// Read the stored document for `id`, so an identical write can be reported as `Unchanged`.
     fn existing(&self, table_sql: &str, id: &str) -> Result<Option<String>> {
         self.transaction
@@ -764,6 +959,147 @@ impl StoreWrite for SqliteWriter<'_> {
             UpsertOutcome::Inserted
         })
     }
+
+    fn put_source_blob(&mut self, request: &BlobRequest<'_>) -> Result<BlobOutcome> {
+        let address = request.content_hash().to_string();
+        let length = request.length();
+
+        // Checked before anything is encoded or written. Returning here leaves the transaction
+        // untouched, so a canonical record written alongside it rolls back with this error rather
+        // than committing a reference to evidence that was refused.
+        if length > self.max_blob_bytes {
+            self.audit(
+                &address,
+                RetentionAction::Refused,
+                &format!("over the {}-byte retention limit", self.max_blob_bytes),
+            )?;
+            return Err(StorageError::BlobTooLarge {
+                actual: length,
+                limit: self.max_blob_bytes,
+            });
+        }
+
+        let present: Option<i64> = self
+            .transaction
+            .query_row(
+                "SELECT 1 FROM source_blobs WHERE content_hash = ?1",
+                params![address],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| StorageError::query("checking for a retained source blob", error))?;
+
+        if present.is_some() {
+            // Byte-identical objects store once. The audit entry still lands, because "this arrived
+            // again" is a fact about the feed worth being able to see.
+            self.audit(&address, RetentionAction::Deduplicated, request.reason())?;
+            return Ok(BlobOutcome::Deduplicated);
+        }
+
+        let (codec, encoded) = encode_bytes(request.bytes());
+        let stored_length = u64::try_from(encoded.len()).unwrap_or(u64::MAX);
+
+        self.transaction
+            .execute(
+                "INSERT INTO source_blobs
+                    (content_hash, codec, original_length, stored_length, bytes, retention, stored_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    address,
+                    codec.as_str(),
+                    i64::try_from(length).unwrap_or(i64::MAX),
+                    i64::try_from(stored_length).unwrap_or(i64::MAX),
+                    encoded,
+                    request.retention().as_str(),
+                    now_rfc3339(),
+                ],
+            )
+            .map_err(|error| StorageError::query("retaining a source blob", error))?;
+
+        self.audit(&address, RetentionAction::Stored, request.reason())?;
+        Ok(BlobOutcome::Stored {
+            stored_length,
+            codec,
+        })
+    }
+
+    fn release_source_blob(&mut self, content_hash: &ContentHash, reason: &str) -> Result<bool> {
+        let address = content_hash.to_string();
+
+        let retention: Option<String> = self
+            .transaction
+            .query_row(
+                "SELECT retention FROM source_blobs WHERE content_hash = ?1",
+                params![address],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| StorageError::query("reading a blob's retention class", error))?;
+
+        let Some(retention) = retention else {
+            // Nothing there. Still audited: an attempt to release evidence that was already gone is
+            // exactly the thing somebody will want to see afterwards.
+            self.audit(
+                &address,
+                RetentionAction::Released,
+                &format!("{reason} (nothing was retained at this address)"),
+            )?;
+            return Ok(false);
+        };
+
+        let class =
+            RetentionClass::from_str_opt(&retention).ok_or_else(|| StorageError::Corrupt {
+                kind: "source_blob",
+                id: address.clone(),
+                reason: format!("unknown retention class {retention:?}"),
+            })?;
+
+        if !class.may_be_swept() {
+            return Err(StorageError::RetentionRefused {
+                content_hash: address,
+                retention: class.as_str(),
+                reason: "the class exists so an automated sweep cannot remove evidence somebody is relying on",
+            });
+        }
+
+        self.transaction
+            .execute(
+                "DELETE FROM source_blobs WHERE content_hash = ?1",
+                params![address],
+            )
+            .map_err(|error| StorageError::query("releasing a source blob", error))?;
+
+        // Audited after the delete, and into a table with no foreign key to the blob, so the record
+        // that it was released outlives the thing released.
+        self.audit(&address, RetentionAction::Released, reason)?;
+        Ok(true)
+    }
+
+    fn reclassify_source_blob(
+        &mut self,
+        content_hash: &ContentHash,
+        retention: RetentionClass,
+        reason: &str,
+    ) -> Result<bool> {
+        let address = content_hash.to_string();
+        let changed = self
+            .transaction
+            .execute(
+                "UPDATE source_blobs SET retention = ?2 WHERE content_hash = ?1",
+                params![address, retention.as_str()],
+            )
+            .map_err(|error| StorageError::query("reclassifying a source blob", error))?;
+
+        if changed == 0 {
+            return Ok(false);
+        }
+        self.audit(
+            &address,
+            RetentionAction::Reclassified,
+            &format!("{reason} (now {retention})"),
+        )?;
+        Ok(true)
+    }
 }
 
 fn outcome(_rows_changed: usize, existed_before: bool) -> UpsertOutcome {
@@ -783,6 +1119,49 @@ pub fn node_ref_kind(node: &NodeRef) -> &'static str {
         NodeRef::Observable(_) => <brolga_model::observable::Observable as Identifiable>::ID_KIND,
         _ => "unknown",
     }
+}
+
+/// Rebuild blob metadata from a row, refusing labels this build does not know.
+///
+/// A row written by a newer build and read as a default would be worse than an error: an unknown
+/// codec silently treated as `identity` returns compressed bytes as though they were the original.
+fn build_metadata(
+    content_hash: ContentHash,
+    codec: &str,
+    original_length: i64,
+    stored_length: i64,
+    retention: &str,
+    stored_at: String,
+) -> Result<BlobMetadata> {
+    let address = content_hash.to_string();
+    Ok(BlobMetadata {
+        content_hash,
+        codec: BlobCodec::from_str_opt(codec).ok_or_else(|| StorageError::Corrupt {
+            kind: "source_blob",
+            id: address.clone(),
+            reason: format!("unknown codec {codec:?}"),
+        })?,
+        original_length: u64::try_from(original_length).unwrap_or(0),
+        stored_length: u64::try_from(stored_length).unwrap_or(0),
+        retention: RetentionClass::from_str_opt(retention).ok_or_else(|| {
+            StorageError::Corrupt {
+                kind: "source_blob",
+                id: address,
+                reason: format!("unknown retention class {retention:?}"),
+            }
+        })?,
+        stored_at,
+    })
+}
+
+/// The current instant, as an RFC 3339 string.
+///
+/// Runtime metadata only. ADR 0001 §6 keeps clock values out of every fingerprint, so this reaches
+/// audit rows and nothing that is compared for equality.
+fn now_rfc3339() -> String {
+    time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap_or_else(|_| "unknown".to_owned())
 }
 
 #[cfg(test)]
