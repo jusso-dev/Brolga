@@ -67,6 +67,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod canon;
 pub mod detect;
 pub mod error;
 pub mod parser;
@@ -76,6 +77,7 @@ pub mod registry;
 #[cfg(feature = "testing")]
 pub mod testing;
 
+pub use canon::{CanonError, Canonical};
 pub use detect::{Candidate, DetectionConfidence, FormatHint};
 pub use error::{IngestError, ParseError, Result};
 pub use parser::{IntelligenceParser, ParseContext, ParseOutput, ParsedRecord, ParserId};
