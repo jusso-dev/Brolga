@@ -8,7 +8,8 @@ members = [
     "crates/brolga-storage",
 ]
 
-# Shared metadata. ADR 0001 §4 pins edition 2024, MSRV 1.85.0, and Rust stable.
+# Shared metadata. ADR 0001 §4 pins edition 2024 and Rust stable; ADR 0002 amends its MSRV clause
+# and raises the floor to 1.88.0, which is the `rust-version` below.
 # ADR 0001 §6 makes the workspace version one compatibility surface among several; it does not
 # imply the schema version or any migration id.
 [workspace.package]
