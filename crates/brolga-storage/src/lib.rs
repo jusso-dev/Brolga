@@ -101,6 +101,7 @@
 pub mod blob;
 pub mod error;
 pub mod migration;
+pub mod quarantine;
 pub mod sqlite;
 pub mod store;
 
@@ -110,6 +111,7 @@ pub use blob::{
 };
 pub use error::StorageError;
 pub use migration::{MIGRATIONS, Migration, latest_version};
+pub use quarantine::{QuarantineEntry, QuarantineRecord, QuarantineStage};
 pub use sqlite::{SqliteStore, StorePath};
 pub use store::{
     IntelligenceStore, MigrationReport, Page, RecordKind, StoreRead, StoreWrite, UpsertOutcome,

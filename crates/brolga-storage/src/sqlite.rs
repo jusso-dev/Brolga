@@ -41,6 +41,7 @@ use crate::blob::{
 };
 use crate::error::{Result, StorageError};
 use crate::migration::{MIGRATIONS, MIGRATIONS_TABLE, latest_version};
+use crate::quarantine::{QuarantineEntry, QuarantineRecord, QuarantineStage};
 use crate::store::{
     IntelligenceStore, MigrationReport, Page, RecordKind, StoreRead, StoreWrite, UpsertOutcome,
 };
@@ -595,6 +596,73 @@ impl StoreRead for SqliteStore {
     fn source_blob_stored_bytes(&self) -> Result<u64> {
         self.scalar("SELECT COALESCE(SUM(stored_length), 0) FROM source_blobs")
     }
+
+    fn quarantined_for_source(&self, source_hash: &ContentHash) -> Result<Vec<QuarantineRecord>> {
+        let address = source_hash.to_string();
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT id, parser, parser_version, stage, reason_kind, reason, record_index,
+                        byte_offset, fragment, first_seen_at, last_seen_at, occurrences
+                 FROM quarantine WHERE source_hash = ?1 ORDER BY last_seen_at DESC, id ASC",
+            )
+            .map_err(|error| StorageError::query("preparing a quarantine query", error))?;
+
+        let rows = statement
+            .query_map(params![address], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                    row.get::<_, String>(5)?,
+                    row.get::<_, Option<i64>>(6)?,
+                    row.get::<_, Option<i64>>(7)?,
+                    row.get::<_, Option<String>>(8)?,
+                    row.get::<_, String>(9)?,
+                    row.get::<_, String>(10)?,
+                    row.get::<_, i64>(11)?,
+                ))
+            })
+            .map_err(|error| StorageError::query("reading quarantine", error))?;
+
+        let mut records = Vec::new();
+        for row in rows {
+            let row =
+                row.map_err(|error| StorageError::query("reading a quarantine row", error))?;
+            let stage =
+                QuarantineStage::from_str_opt(&row.3).ok_or_else(|| StorageError::Corrupt {
+                    kind: "quarantine",
+                    id: row.0.clone(),
+                    reason: format!("unknown stage {:?}", row.3),
+                })?;
+            records.push(QuarantineRecord {
+                id: row.0,
+                source_hash: *source_hash,
+                parser: row.1,
+                parser_version: u32::try_from(row.2).unwrap_or(0),
+                stage,
+                reason_kind: row.4,
+                reason: row.5,
+                record_index: row.6.and_then(|value| u64::try_from(value).ok()),
+                byte_offset: row.7.and_then(|value| u64::try_from(value).ok()),
+                fragment: row.8,
+                first_seen_at: row.9,
+                last_seen_at: row.10,
+                occurrences: u64::try_from(row.11).unwrap_or(0),
+            });
+        }
+        Ok(records)
+    }
+
+    fn quarantine_count(&self) -> Result<u64> {
+        self.scalar("SELECT COUNT(*) FROM quarantine")
+    }
+
+    fn quarantine_occurrences(&self) -> Result<u64> {
+        self.scalar("SELECT COALESCE(SUM(occurrences), 0) FROM quarantine")
+    }
 }
 
 impl IntelligenceStore for SqliteStore {
@@ -1099,6 +1167,53 @@ impl StoreWrite for SqliteWriter<'_> {
             &format!("{reason} (now {retention})"),
         )?;
         Ok(true)
+    }
+
+    fn quarantine(&mut self, entry: &QuarantineEntry) -> Result<bool> {
+        let id = entry.derive_id();
+        let now = now_rfc3339();
+
+        // Upsert on the derived identity, incrementing rather than appending. `first_seen_at` is
+        // left alone by the update, so the row keeps saying when this first went wrong.
+        let changed = self
+            .transaction
+            .execute(
+                "INSERT INTO quarantine
+                    (id, source_hash, parser, parser_version, stage, reason_kind, reason,
+                     record_index, byte_offset, fragment, first_seen_at, last_seen_at, occurrences)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11, 1)
+                 ON CONFLICT(id) DO UPDATE SET
+                    reason       = excluded.reason,
+                    fragment     = excluded.fragment,
+                    last_seen_at = excluded.last_seen_at,
+                    occurrences  = quarantine.occurrences + 1",
+                params![
+                    id,
+                    entry.source_hash.to_string(),
+                    entry.parser,
+                    i64::from(entry.parser_version),
+                    entry.stage.as_str(),
+                    entry.reason_kind,
+                    entry.reason,
+                    entry.record_index.and_then(|v| i64::try_from(v).ok()),
+                    entry.byte_offset.and_then(|v| i64::try_from(v).ok()),
+                    entry.fragment,
+                    now,
+                ],
+            )
+            .map_err(|error| StorageError::query("quarantining a record", error))?;
+
+        let occurrences: i64 = self
+            .transaction
+            .query_row(
+                "SELECT occurrences FROM quarantine WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(|error| StorageError::query("reading a quarantine occurrence count", error))?;
+
+        let _ = changed;
+        Ok(occurrences == 1)
     }
 }
 
