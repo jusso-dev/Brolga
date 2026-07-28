@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
-members = ["crates/brolga-config", "crates/brolga-model"]
+members = [
+    "crates/brolga-config",
+    "crates/brolga-model",
+    "crates/brolga-storage",
+]
 
 # Shared metadata. ADR 0001 §4 pins edition 2024, MSRV 1.85.0, and Rust stable.
 # ADR 0001 §6 makes the workspace version one compatibility surface among several; it does not
