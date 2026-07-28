@@ -26,6 +26,13 @@ What works today:
 
 What does not work yet: **ingestion, the intelligence graph, compression, context packs, the HTTP API, the MCP server, connectors, and plugins.** `brolga ingest` and `brolga context` exist as commands and exit `5`, naming the milestone that implements them, rather than pretending to succeed.
 
+`v0.2.0 — Core ingestion` is in progress. The parser registry and ingestion pipeline exist as
+library code, with a reference parser behind a `testing` feature and **no real format parser yet** —
+so there is still nothing to ingest and `brolga ingest` still exits `5`. STIX, MISP, and the
+delimited formats arrive in [#13](https://github.com/jusso-dev/Brolga/issues/13),
+[#14](https://github.com/jusso-dev/Brolga/issues/14), and
+[#15](https://github.com/jusso-dev/Brolga/issues/15).
+
 Work continues as scoped, dependency-aware [GitHub issues](https://github.com/jusso-dev/Brolga/issues) across eight release milestones. Each defines outcome, scope, acceptance criteria, dependencies, non-goals, and security and provenance impact. See the [roadmap](docs/ROADMAP.md) before proposing implementation.
 
 ## Try it
