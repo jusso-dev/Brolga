@@ -1,0 +1,45 @@
+# Every setting Brolga v0.1.0 understands, written out explicitly.
+#
+# This file exists to be read: it documents the complete surface and the values
+# shown are the defaults, so copying it changes nothing until an operator edits
+# a line. It is validated by the crate's test suite, so it cannot drift from the
+# code.
+version: 1
+
+storage:
+  # Only `sqlite` exists in v0.1.0. PostgreSQL arrives behind an off-by-default
+  # feature in a later milestone.
+  backend: sqlite
+  sqlite:
+    # Relative to the working directory. A `..` component is rejected.
+    path: brolga.sqlite
+    # How long to wait for a competing writer before giving up. 100..=300000.
+    busy_timeout_ms: 5000
+
+# Bounds applied to untrusted input. Every one is bounded on both sides: a limit
+# of zero disables a protection, and an unbounded limit is not a limit.
+limits:
+  # 64 MiB. Range 1024..=1073741824.
+  max_input_bytes: 67108864
+  # Range 1..=1024.
+  max_nesting_depth: 64
+  # Range 1..=100000000.
+  max_records_per_import: 1000000
+  # Range 1..=86400.
+  operation_timeout_seconds: 300
+
+logging:
+  # error | warn | info | debug | trace
+  level: info
+  # text | json
+  format: text
+
+# Named secret *references*. A configuration file never contains a secret value;
+# it says where one lives. Writing a bare string here is a parse error.
+#
+# secrets:
+#   feed_token:
+#     from_env: BROLGA_FEED_TOKEN
+#   upstream_key:
+#     from_file: /run/secrets/upstream-key
+secrets: {}
