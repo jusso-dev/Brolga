@@ -87,6 +87,7 @@ pub mod error;
 pub mod layer;
 pub mod load;
 pub mod model;
+pub mod policy;
 pub mod profile;
 pub mod schema;
 pub mod secret;
@@ -99,6 +100,7 @@ pub use model::{
     BrolgaConfig, CONFIG_VERSION, LimitsConfig, LogFormat, LogLevel, LoggingConfig, SqliteConfig,
     StorageBackend, StorageConfig,
 };
+pub use policy::{Capability, Decision, Denial, PolicyIdentity, decide, partition};
 pub use profile::{
     ContextProfile, PROFILE_SCHEMA, PlanAction, PlanReason, PlanStep, Preservation, ProfileError,
     ProfileSet, Section, Weight,
