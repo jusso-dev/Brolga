@@ -23,12 +23,32 @@
 //!   name. A merge is close to irreversible in practice: once two actors' claims and sightings are
 //!   attributed to one identity, unpicking which evidence belonged to which is work nobody has the
 //!   information to do afterwards.
+//! - [`contradiction`] — telling disagreement from difference, one predicate slot at a time.
+//!   Comparing values without first agreeing which question they answer manufactures conflicts out
+//!   of ordinary difference, and an operator shown ten fabricated conflicts stops reading the
+//!   eleventh, which is real.
+//! - [`confidence`] — composing a figure out of components that can each be argued with, and
+//!   recording the configuration that produced it. A bare number cannot be explained, recomputed
+//!   when one input changes, or disagreed with.
 
 #![forbid(unsafe_code)]
 
+pub mod confidence;
+pub mod contradiction;
 pub mod dedup;
 pub mod resolve;
 
+pub use confidence::{
+    AnalystOverride, COMPONENT_CORROBORATION, COMPONENT_INFORMATION_CREDIBILITY, COMPONENT_RECENCY,
+    COMPONENT_SOURCE_RELIABILITY, COMPONENT_STANCE, CONFIDENCE_ALGORITHM,
+    CONFIDENCE_ALGORITHM_VERSION, ComponentWeights, ConfidenceAssessment, ConfidencePolicy,
+    ConfidenceScorer, Corroboration, OverrideRefused, Penalty, ScoreComponent, ScoringInputs,
+};
+pub use contradiction::{
+    CONTRADICTION_ALGORITHM, CONTRADICTION_ALGORITHM_VERSION, ClaimRelation, ClaimStance,
+    ContradictionDecision, ContradictionDetector, ContradictionReport, ContradictionRules,
+    Predicate, ReviewedClaim,
+};
 pub use dedup::{
     DEDUP_ALGORITHM, DEDUP_ALGORITHM_VERSION, DedupDecision, DedupVerdict, Deduplicator,
     Observation, RecordLineage,
