@@ -98,6 +98,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "graph_checkpoints",
         sql: GRAPH_CHECKPOINTS,
     },
+    Migration {
+        id: 8,
+        name: "connector_cursors",
+        sql: CONNECTOR_CURSORS,
+    },
 ];
 
 /// The highest migration identifier this build carries.
@@ -364,6 +369,40 @@ CREATE TABLE graph_checkpoints (
 
 CREATE INDEX graph_checkpoints_shape      ON graph_checkpoints (shape);
 CREATE INDEX graph_checkpoints_captured   ON graph_checkpoints (captured_at);
+";
+
+/// Where a connector remembers how far it got.
+///
+/// # Why the cursor lives beside the records rather than in a config file
+///
+/// The cursor is advanced in the **same transaction** as the records the page produced
+/// ([ADR 0005](../../../docs/adr/0005-connector-crate-boundary-and-outbound-network-policy.md) §4).
+/// A cursor kept anywhere else can disagree with the database: advance it, fail to store, and the
+/// records in that window are never fetched again — with no error, because the next run simply
+/// starts after the gap. Keeping both in one transaction makes a crash cost a repeated page, which
+/// is idempotent, instead of a hole nobody can see.
+///
+/// Keyed on `(connector, feed)` rather than on a URL. A server that moves to a new hostname is the
+/// same feed and should not restart from the beginning, and two collections on one server are
+/// different feeds that must not share a cursor.
+///
+/// `etag` and `added_after` are separate columns rather than one opaque token because they answer
+/// different questions — "has this resource changed at all" and "what is new since" — and a server
+/// may support either, both, or neither.
+const CONNECTOR_CURSORS: &str = "\
+CREATE TABLE connector_cursors (
+    connector     TEXT    NOT NULL,
+    feed          TEXT    NOT NULL,
+    added_after   TEXT,
+    etag          TEXT,
+    next_token    TEXT,
+    last_run_at   TEXT    NOT NULL,
+    last_status   TEXT    NOT NULL,
+    records_seen  INTEGER NOT NULL,
+    PRIMARY KEY (connector, feed)
+) STRICT;
+
+CREATE INDEX connector_cursors_last_run ON connector_cursors (last_run_at);
 ";
 
 #[cfg(test)]

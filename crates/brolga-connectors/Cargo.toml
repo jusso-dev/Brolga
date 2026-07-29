@@ -1,0 +1,27 @@
+[package]
+name = "brolga-connectors"
+description = "Read-only outbound retrieval for Brolga: transport policy, sync state, and protocol clients"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories = ["network-programming"]
+
+[lints]
+workspace = true
+
+[dependencies]
+brolga-ingest = { version = "0.1.0", path = "../brolga-ingest" }
+brolga-model = { version = "0.1.0", path = "../brolga-model" }
+brolga-security = { version = "0.1.0", path = "../brolga-security" }
+brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.19"
+ureq = { version = "3", default-features = false, features = ["rustls"] }
+
+[dev-dependencies]
+brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
