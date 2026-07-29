@@ -108,12 +108,16 @@ name = "brolga-cli"
 version = "0.1.0"
 dependencies = [
  "brolga-config",
+ "brolga-graph",
+ "brolga-ingest",
  "brolga-model",
+ "brolga-security",
  "brolga-storage",
  "clap",
  "serde",
  "serde_json",
  "tempfile",
+ "time",
  "tracing",
  "tracing-subscriber",
  "uuid",

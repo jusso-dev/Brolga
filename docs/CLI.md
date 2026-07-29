@@ -3,6 +3,8 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
+`ingest`, `stats`, `show`, `sources`, and `quarantine` are implemented. `context` is not, and exits `5`.
+
 ## Output contract
 
 **stdout is the answer. stderr is everything else.**

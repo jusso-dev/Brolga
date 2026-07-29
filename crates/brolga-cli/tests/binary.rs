@@ -175,23 +175,24 @@ fn a_configuration_problem_exits_three() {
     );
 }
 
+/// `context` is the remaining unimplemented command. `ingest` used to be listed here and no longer
+/// is, because it is implemented — a command that exits 5 forever is a promise, and this test is
+/// what stops the promise outliving the delivery.
 #[test]
 fn an_unimplemented_command_exits_five_and_says_so() {
-    for command in ["ingest", "context"] {
-        let output = brolga(&[command, "anything"]);
-        assert_eq!(code(&output), 5, "{command} must exit 5");
+    let output = brolga(&["context", "anything"]);
+    assert_eq!(code(&output), 5, "context must exit 5");
 
-        let message = stderr(&output);
-        assert!(message.contains("not implemented"), "{message}");
-        assert!(
-            message.contains("v0."),
-            "the message names a milestone: {message}"
-        );
-        assert!(
-            stdout(&output).is_empty(),
-            "an unimplemented command must not print a result",
-        );
-    }
+    let message = stderr(&output);
+    assert!(message.contains("not implemented"), "{message}");
+    assert!(
+        message.contains("v0."),
+        "the message names a milestone: {message}"
+    );
+    assert!(
+        stdout(&output).is_empty(),
+        "an unimplemented command must not print a result",
+    );
 }
 
 #[test]
@@ -220,7 +221,7 @@ fn the_registry_the_binary_reports_matches_the_codes_it_returns() {
     );
     assert_eq!(i64::from(code(&brolga(&["teleport"]))), find("usage"));
     assert_eq!(
-        i64::from(code(&brolga(&["ingest"]))),
+        i64::from(code(&brolga(&["context"]))),
         find("not_implemented")
     );
 }
@@ -460,4 +461,256 @@ fn later_configuration_files_override_earlier_ones() {
 
     assert_eq!(level["value"], "\"warn\"");
     assert!(level["source"].as_str().unwrap().contains("second.yaml"));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The ingest → store → inspect loop, run as a process
+// ---------------------------------------------------------------------------------------------
+
+/// A scratch directory holding the fixture corpus, so each test gets its own database.
+fn workspace() -> tempfile::TempDir {
+    let directory = tempfile::TempDir::new().expect("a scratch directory");
+    for name in ["bundle.json", "event.json", "indicators.txt"] {
+        std::fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/fixtures")
+                .join(name),
+            directory.path().join(name),
+        )
+        .expect("fixture copied");
+    }
+    directory
+}
+
+/// Run the binary inside a scratch directory.
+fn brolga_in(directory: &Path, arguments: &[&str]) -> Output {
+    Command::new(env!("CARGO_BIN_EXE_brolga"))
+        .current_dir(directory)
+        .args(arguments)
+        .output()
+        .expect("the brolga binary must run")
+}
+
+/// The whole point of this change: a real STIX bundle, a real MISP event, and a plain indicator
+/// list go in through the actual binary and come back out as counted records.
+#[test]
+fn three_real_formats_ingest_through_the_binary_and_are_readable_afterwards() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    let ingest = brolga_in(
+        path,
+        &[
+            "ingest",
+            "bundle.json",
+            "event.json",
+            "indicators.txt",
+            "--mode",
+            "permissive",
+        ],
+    );
+    assert_eq!(code(&ingest), 0, "stderr: {}", stderr(&ingest));
+    assert!(stdout(&ingest).contains("permissive ingest:"));
+
+    let stats = brolga_in(path, &["--output", "json", "stats"]);
+    assert_eq!(code(&stats), 0);
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout(&stats)).expect("stats must emit one JSON object");
+
+    assert!(
+        parsed["entities"].as_u64().unwrap_or(0) > 0,
+        "entities landed: {parsed}"
+    );
+    assert!(parsed["claims"].as_u64().unwrap_or(0) > 0, "{parsed}");
+    assert_eq!(
+        parsed["source_objects"].as_u64(),
+        Some(3),
+        "one source object per file: {parsed}"
+    );
+    assert_eq!(
+        parsed["retained_sources"].as_u64(),
+        Some(3),
+        "the original bytes are retained by default: {parsed}"
+    );
+}
+
+/// Strict is the default, and it must refuse a corpus containing anything it cannot map rather
+/// than importing the readable part.
+#[test]
+fn strict_is_the_default_and_writes_nothing_when_a_record_cannot_be_accepted() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    let ingest = brolga_in(path, &["ingest", "bundle.json"]);
+    assert_ne!(code(&ingest), 0, "the bundle holds an unmapped object type");
+
+    let stats = brolga_in(path, &["--output", "json", "stats"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&stats)).unwrap();
+    assert_eq!(parsed["entities"].as_u64(), Some(0), "nothing landed");
+    assert_eq!(parsed["retained_sources"].as_u64(), Some(0));
+}
+
+/// A dry run must exercise the same parsing as a real one and write nothing.
+#[test]
+fn a_dry_run_reports_what_would_land_and_writes_nothing() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    let dry = brolga_in(
+        path,
+        &["ingest", "bundle.json", "--mode", "permissive", "--dry-run"],
+    );
+    assert_eq!(code(&dry), 0, "stderr: {}", stderr(&dry));
+    assert!(stdout(&dry).contains("nothing written"), "{}", stdout(&dry));
+
+    assert!(
+        !path.join("brolga.sqlite").exists(),
+        "a dry run must not even create the database"
+    );
+}
+
+/// Rejections are inspectable afterwards, which is the difference between a quarantine and a log
+/// line nobody kept.
+#[test]
+fn a_quarantined_record_is_readable_from_the_binary_with_its_reason() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+
+    let sources = brolga_in(path, &["--output", "json", "sources"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&sources)).unwrap();
+    let digest = parsed["sources"][0]["content_hash"]
+        .as_str()
+        .expect("a retained source")
+        .to_owned();
+
+    let quarantine = brolga_in(path, &["quarantine", "--source", &digest]);
+    assert_eq!(code(&quarantine), 0, "stderr: {}", stderr(&quarantine));
+    assert!(
+        stdout(&quarantine).contains("unsupported_object_type"),
+        "the reason category is shown: {}",
+        stdout(&quarantine)
+    );
+    assert!(
+        stdout(&quarantine).contains("quarantined rather than coerced"),
+        "and the reason itself: {}",
+        stdout(&quarantine)
+    );
+}
+
+/// `show` returns the document as stored, provenance and all — which is what makes a record
+/// arguable rather than merely present.
+#[test]
+fn show_returns_a_stored_record_including_its_provenance() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+
+    // Find an identifier without reaching into the database: the JSON stats say how many there
+    // are, and `sources` gives a source object identifier that `show` must also accept.
+    let sources = brolga_in(path, &["--output", "json", "sources"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&sources)).unwrap();
+    let id = parsed["sources"][0]["id"]
+        .as_str()
+        .expect("an id")
+        .to_owned();
+
+    let shown = brolga_in(path, &["show", &id]);
+    assert_eq!(code(&shown), 0, "stderr: {}", stderr(&shown));
+    let record: serde_json::Value =
+        serde_json::from_str(&stdout(&shown)).expect("show must emit one JSON object");
+    assert_eq!(record["id"].as_str(), Some(id.as_str()));
+}
+
+/// The exit-code registry is a compatibility surface, so a script branches on the code rather than
+/// on the message. A malformed identifier and a missing record are different problems.
+#[test]
+fn show_distinguishes_a_malformed_identifier_from_a_missing_record() {
+    let workspace = workspace();
+    let path = workspace.path();
+    brolga_in(path, &["ingest", "indicators.txt", "--mode", "permissive"]);
+
+    let malformed = brolga_in(path, &["show", "not-an-identifier"]);
+    assert_eq!(code(&malformed), 2, "usage");
+    assert!(stdout(&malformed).is_empty(), "no result on stdout");
+
+    let missing = brolga_in(
+        path,
+        &["show", "entity:00000000-0000-0000-0000-000000000000"],
+    );
+    assert_eq!(code(&missing), 1, "failure, not usage");
+    assert!(stdout(&missing).is_empty());
+}
+
+/// Re-ingesting the same files must converge rather than accumulate — the normal case for a
+/// scheduled import, and the thing that makes a homelab deployment usable rather than growing.
+#[test]
+fn re_ingesting_the_same_files_converges() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    for _ in 0..3 {
+        let run = brolga_in(
+            path,
+            &[
+                "ingest",
+                "bundle.json",
+                "indicators.txt",
+                "--mode",
+                "permissive",
+            ],
+        );
+        assert_eq!(code(&run), 0, "stderr: {}", stderr(&run));
+    }
+
+    let stats = brolga_in(path, &["--output", "json", "stats"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&stats)).unwrap();
+    assert_eq!(
+        parsed["source_objects"].as_u64(),
+        Some(2),
+        "two files, three runs, two source objects: {parsed}"
+    );
+    assert_eq!(
+        parsed["quarantine_occurrences"].as_u64(),
+        Some(3),
+        "the same rejection seen three times is one row counted three times: {parsed}"
+    );
+}
+
+/// `--output json` must put exactly one object on stdout, whatever commentary is produced.
+#[test]
+fn ingest_in_json_mode_puts_one_parseable_object_on_stdout() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    let ingest = brolga_in(
+        path,
+        &[
+            "--output",
+            "json",
+            "ingest",
+            "bundle.json",
+            "--mode",
+            "permissive",
+        ],
+    );
+    assert_eq!(code(&ingest), 0, "stderr: {}", stderr(&ingest));
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&stdout(&ingest)).expect("stdout must be exactly one JSON object");
+    assert_eq!(parsed["mode"].as_str(), Some("permissive"));
+    assert_eq!(parsed["reconciles"].as_bool(), Some(true));
+}
+
+/// Reading a file that is not there is an I/O problem, not a parse failure, and gets its own code.
+#[test]
+fn a_missing_input_file_reports_an_io_failure_rather_than_a_parse_failure() {
+    let workspace = workspace();
+    let missing = brolga_in(workspace.path(), &["ingest", "no-such-file.json"]);
+
+    assert_eq!(code(&missing), 6, "io");
+    assert!(stderr(&missing).contains("cannot read"));
+    assert!(stdout(&missing).is_empty());
 }
