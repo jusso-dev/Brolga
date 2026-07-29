@@ -1,11 +1,15 @@
 # Brolga in a homelab.
 #
-# Brolga is a command-line tool, not a service. Every command opens the database, does one thing,
-# writes its result to stdout, and exits. That single fact shapes this file more than anything
-# else in it, and it is why the usual service-shaped defaults are wrong here.
+# Two shapes, deliberately separated into two services over one volume:
 #
-# The normal way to use this file is `docker compose run --rm brolga <command>`. See
-# docs/DEPLOYMENT.md.
+#   `brolga`      a command that runs and exits. `docker compose run --rm brolga <command>`.
+#                 No network, because ingestion makes no outbound connection.
+#   `brolga-api`  the read-only HTTP API, for services that pull context from Brolga. Started
+#                 with `docker compose --profile serve up -d`.
+#
+# They are separate services rather than one, because almost everything that is right for a
+# command that exits is wrong for a daemon: the restart policy, the network, and whether a
+# healthcheck means anything. See docs/DEPLOYMENT.md and docs/API.md.
 
 name: brolga
 
@@ -57,6 +61,64 @@ services:
     # deliberately generous for a homelab and are the ceiling, not the expectation; Brolga
     # applies its own limits from configuration well below them.
     mem_limit: 2g
+    pids_limit: 256
+
+  # ---------------------------------------------------------------------------------------------
+  # The read-only HTTP API.
+  # ---------------------------------------------------------------------------------------------
+  brolga-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brolga:local
+
+    # Behind a profile, so `docker compose up` still runs `doctor` and exits. Starting a daemon
+    # because someone typed `up` is not what an operator reading this file would expect.
+    profiles: ["serve"]
+
+    # `unless-stopped` is right *here* and wrong for the service above: this one is supposed to
+    # stay running, so a crash is a fault worth recovering from.
+    restart: unless-stopped
+
+    # Bound to every interface *inside the container*, which is what makes it reachable through
+    # the published port below. The container's network namespace is the boundary here, not the
+    # bind address — and the token is what actually protects it, which is why the server refuses
+    # to start on a reachable address without one.
+    command: ["serve", "--bind", "0.0.0.0:8787", "--database", "/data/brolga.sqlite"]
+
+    environment:
+      # Required. There is no default and no fallback: the server exits 3 rather than starting
+      # without one, so a missing token is a failed deployment rather than an open database.
+      BROLGA_API_TOKEN: ${BROLGA_API_TOKEN:?set BROLGA_API_TOKEN to a token of at least 16 characters}
+
+    ports:
+      # Bound to the host's loopback by default. An operator who wants other machines to reach it
+      # should say so explicitly by setting BROLGA_API_BIND to 0.0.0.0 — publishing to every
+      # interface is not something to do because a default did it quietly.
+      - "${BROLGA_API_BIND:-127.0.0.1}:8787:8787"
+
+    volumes:
+      # The same volume the command-line service writes to. Read-only would be better, but SQLite
+      # needs to write its WAL and shared-memory files even to read.
+      - brolga-data:/data
+
+    healthcheck:
+      # `/health` and not `/ready`: a liveness check that fails because a query is slow makes
+      # Docker restart a process that was working.
+      test: ["CMD", "/usr/local/bin/brolga", "--version"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    mem_limit: 1g
     pids_limit: 256
 
 volumes:

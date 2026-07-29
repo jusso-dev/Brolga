@@ -357,3 +357,71 @@ container reports `uid=65532(brolga)`, and the same run succeeds under `--read-o
   build and run the binary on `ubuntu-latest`, which is amd64 — but natively, not in this image.
 - The `sqlite3 ".backup"` alternative, the restore-from-tar sequence, and copying a config into the
   volume. Written from the same primitives as the recipes that were executed, and not themselves run.
+
+## Running the HTTP API
+
+Brolga's other shape: a read-only server that other services pull context from. See
+[docs/API.md](API.md) for the routes and the response contract.
+
+```bash
+export BROLGA_API_TOKEN="$(openssl rand -hex 32)"
+docker compose --profile serve up -d brolga-api
+```
+
+It is behind a Compose profile, so a bare `docker compose up` still runs `doctor` and exits rather
+than quietly starting a daemon.
+
+### The token is required, not optional
+
+`BROLGA_API_TOKEN` has no default and no fallback. Compose refuses to render the file without it,
+and the server exits 3 rather than starting — a missing token is a failed deployment rather than an
+open database.
+
+```console
+$ docker compose --profile serve up -d brolga-api
+required variable BROLGA_API_TOKEN is missing a value: set BROLGA_API_TOKEN to a token of at
+least 16 characters
+```
+
+### Who can reach it
+
+The published port binds the host's loopback by default. To let other machines reach it:
+
+```bash
+export BROLGA_API_BIND=0.0.0.0
+docker compose --profile serve up -d brolga-api
+```
+
+Publishing to every interface is deliberately something you have to type. Note that the container's
+own `--bind 0.0.0.0` is not the boundary — the container's network namespace is, and the published
+port is what crosses it.
+
+### Checking it
+
+```bash
+curl -s localhost:8787/api/v1/health                                   # no token needed
+curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" \
+     localhost:8787/api/v1/stats | jq .data
+```
+
+`/health` is exempt from authentication so a probe does not fail when the token rotates. Everything
+else returns 401 without a valid token.
+
+### Sharing the database with the CLI
+
+Both services use the `brolga-data` volume, so ingest with the command-line service and the running
+API sees the result:
+
+```bash
+docker compose run --rm brolga ingest /feeds/bundle.json --mode permissive
+curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" localhost:8787/api/v1/stats | jq .data
+```
+
+SQLite allows one writer and many readers, so an ingest running while the API serves is fine. Two
+ingests at once are not — the second waits on the busy timeout and then fails.
+
+### What the container gives up
+
+Read-only root filesystem, every capability dropped, `no-new-privileges`, non-root user, 1 GB
+memory, 256 processes. The API makes no outbound connections; unlike the command-line service it
+cannot use `network_mode: none`, because it has to answer on a port.
