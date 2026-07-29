@@ -49,11 +49,15 @@
 #![forbid(unsafe_code)]
 
 pub mod error;
+pub mod misp;
 pub mod sync;
 pub mod taxii;
 pub mod transport;
 
 pub use error::ConnectorError;
-pub use sync::{FeedRef, SyncOptions, SyncReport, TAXII_CONNECTOR, sync_collection};
+pub use misp::{MISP_CONNECTOR, MispClient, MispFeed, MispInstance, MispPage};
+pub use sync::{
+    FeedRef, MispTarget, SyncOptions, SyncReport, TAXII_CONNECTOR, sync_collection, sync_misp_feed,
+};
 pub use taxii::{Collection, Discovery, ObjectPage, TaxiiClient, TaxiiVersion};
 pub use transport::{MAX_RESPONSE_BYTES, PolicyTransport, Request, Response, Transport};
