@@ -40,6 +40,7 @@ use crate::blob::{
     BlobCodec, BlobMetadata, BlobOutcome, BlobRequest, RetentionAction, RetentionClass,
     RetentionEvent, RetrievedBlob, decode_bytes, encode_bytes,
 };
+use crate::checkpoint::CheckpointSummary;
 use crate::decision::GraphDecisionRow;
 use crate::error::{Result, StorageError};
 use crate::migration::{MIGRATIONS, MIGRATIONS_TABLE, latest_version};
@@ -911,6 +912,42 @@ impl StoreRead for SqliteStore {
         self.document_json(GET_SOURCE_OBJECT, id, "source_object")
     }
 
+    fn get_checkpoint(&self, name: &str) -> Result<Option<serde_json::Value>> {
+        self.document_json(
+            "SELECT document FROM graph_checkpoints WHERE name = ?1",
+            name,
+            "graph_checkpoint",
+        )
+    }
+
+    fn list_checkpoints(&self) -> Result<Vec<CheckpointSummary>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT name, shape, graph_version, algorithm, algorithm_version, captured_at,
+                        truncated
+                 FROM graph_checkpoints ORDER BY captured_at DESC, name ASC",
+            )
+            .map_err(|error| StorageError::query("preparing a checkpoint listing", error))?;
+
+        let rows = statement
+            .query_map([], |row| {
+                Ok(CheckpointSummary {
+                    name: row.get(0)?,
+                    shape: row.get(1)?,
+                    graph_version: u64::try_from(row.get::<_, i64>(2)?).unwrap_or(0),
+                    algorithm: row.get(3)?,
+                    algorithm_version: u32::try_from(row.get::<_, i64>(4)?).unwrap_or(0),
+                    captured_at: row.get(5)?,
+                    truncated: row.get::<_, i64>(6)? != 0,
+                })
+            })
+            .map_err(|error| StorageError::query("listing checkpoints", error))?;
+
+        rows.collect::<core::result::Result<Vec<_>, _>>()
+            .map_err(|error| StorageError::query("reading a checkpoint row", error))
+    }
+
     fn graph_version(&self) -> Result<u64> {
         self.scalar("SELECT version FROM graph_meta WHERE id = 1")
     }
@@ -1586,6 +1623,68 @@ impl StoreWrite for SqliteWriter<'_> {
 
         let _ = changed;
         Ok(occurrences == 1)
+    }
+
+    fn put_checkpoint(
+        &mut self,
+        summary: &CheckpointSummary,
+        document: &serde_json::Value,
+    ) -> Result<bool> {
+        let encoded = serde_json::to_string(document).map_err(|error| StorageError::Corrupt {
+            kind: "graph_checkpoint",
+            id: summary.name.clone(),
+            reason: format!("checkpoint could not be encoded: {error}"),
+        })?;
+
+        let existed: Option<i64> = self
+            .transaction
+            .query_row(
+                "SELECT 1 FROM graph_checkpoints WHERE name = ?1",
+                params![summary.name],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| StorageError::query("checking for a checkpoint", error))?;
+
+        self.transaction
+            .execute(
+                "INSERT INTO graph_checkpoints
+                    (name, shape, graph_version, algorithm, algorithm_version, captured_at,
+                     truncated, document)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(name) DO UPDATE SET
+                    shape             = excluded.shape,
+                    graph_version     = excluded.graph_version,
+                    algorithm         = excluded.algorithm,
+                    algorithm_version = excluded.algorithm_version,
+                    captured_at       = excluded.captured_at,
+                    truncated         = excluded.truncated,
+                    document          = excluded.document",
+                params![
+                    summary.name,
+                    summary.shape,
+                    i64::try_from(summary.graph_version).unwrap_or(i64::MAX),
+                    summary.algorithm,
+                    i64::from(summary.algorithm_version),
+                    summary.captured_at,
+                    i64::from(summary.truncated),
+                    encoded,
+                ],
+            )
+            .map_err(|error| StorageError::query("storing a checkpoint", error))?;
+
+        Ok(existed.is_none())
+    }
+
+    fn delete_checkpoint(&mut self, name: &str) -> Result<bool> {
+        let removed = self
+            .transaction
+            .execute(
+                "DELETE FROM graph_checkpoints WHERE name = ?1",
+                params![name],
+            )
+            .map_err(|error| StorageError::query("deleting a checkpoint", error))?;
+        Ok(removed > 0)
     }
 
     fn record_graph_decision(&mut self, decision: &GraphDecisionRow) -> Result<bool> {
