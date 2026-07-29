@@ -1,0 +1,4 @@
+indicator,malicious,score,endpoint,notes
+" 1.2.3.4 ",true,80,"host.example:8443","a  note	with   spacing"
+evil2[.]example[.]com,false,10,"other.example:443",plain
+,true,0,,"no indicator, so the filter drops this row"

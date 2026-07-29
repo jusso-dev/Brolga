@@ -3,8 +3,8 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
-`completion` are implemented. `context` is not, and exits `5`.
+`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `mapping`, `stats`, `show`, `sources`,
+`quarantine`, `search`, `neighbours`, `checkpoint`, and `completion` are implemented.
 
 `brolga completion <shell>` prints a completion script generated from **this build's** command tree,
 so it can never advertise a command the binary does not have — which would be worse than no
@@ -546,3 +546,82 @@ rephrases, and eventually reports something that did not happen.
 
 One malformed frame is answered and the session continues, rather than the connection dropping and
 the agent retrying the whole conversation.
+
+## `brolga mapping`
+
+Read a structured format nobody wrote a parser for, through a declarative mapping.
+
+```bash
+brolga mapping validate examples/mappings/acme-json.yml
+brolga mapping explain  examples/mappings/acme-json.yml
+brolga ingest feed.json --mapping examples/mappings/acme-json.yml
+```
+
+`validate` exits `0` only if the mapping would run. `explain` prints what it will do — and what the
+engine refuses to do whatever the mapping says, which is the half that matters when the mapping came
+from somewhere else. Neither reads a feed, opens a store, or touches a network.
+
+An invalid mapping exits `3` (configuration invalid), not `2` (usage): the command line was fine and
+the operator's file was not, and a script has to be able to tell the two apart.
+
+### A mapping is data, not code
+
+There is no expression evaluator, and that is the design rather than a limitation to be lifted later.
+A mapping has **paths**, which select values, and **transforms**, which are a closed list of named
+string operations. It cannot branch, loop, call anything, or name a transform this build does not
+have — a mapping naming one fails to *load*, before a byte of feed data is read.
+
+Everything is bounded and the bounds are stated in the file:
+
+| Bound | Default | Ceiling this build enforces |
+| --- | --- | --- |
+| Records per document | 100,000 | 5,000,000 |
+| Nodes per path evaluation | 100,000 | 5,000,000 |
+| Path segments | — | 16 |
+| Wildcards per path | — | 2 |
+| Transforms per field | — | 8 |
+| Transform output | — | 8 KiB |
+
+A mapping may **lower** its own limits and never raise them. Exceeding a bound is an error, never a
+truncated result — a partial answer silently understates a document, and a caller that could not tell
+the difference would report a short answer as a complete one.
+
+### What the paths deliberately cannot express
+
+`a.b[0].c`, `items[*].value`, `@attribute` for XML, a header name or `[n]` for CSV. That is the whole
+grammar.
+
+Refused **by name**, so a pasted JSONPath expression says what to remove rather than matching
+nothing: `..` (recursive descent — it walks a document of unknown depth, so its cost cannot be read
+off the expression), `[?(…)]` (filter predicates — an expression language), `[a,b]` (unions),
+`[1:3]` (slices), and `@.` (the current-node reference that predicates need).
+
+### What a mapping cannot produce
+
+One observable per record — the **subject** — and claims about it. Exactly one field must be marked
+`subject: true`, and its target must be an observable.
+
+A mapping cannot mint an entity or a relationship. An entity needs a canonical identity rule for its
+kind, and letting a mapping create entities from arbitrary strings would put thousands of
+near-duplicate hubs in the graph: `Acme Corp`, `ACME Corp.`, and `acme corp` as three actors. An
+observable has a canonicaliser that makes identity a function of the value; an entity name does not.
+
+### `--mapping` replaces the compiled parsers for that batch
+
+The mapping becomes the only parser for the files in that invocation. A mixed batch of a STIX bundle
+and an in-house CSV is two invocations.
+
+That is deliberate. Registering the mapping alongside the compiled parsers was the first design and
+it does not work: the registry resolves a tie below `certain` by parser identifier, and the permissive
+flat JSON and delimited readers claim `strong` on anything JSON-shaped or comma-shaped — so a mapping
+would lose to `brolga.flat.json` on an alphabetical accident. Losing silently to a generic reader is
+the worst available outcome for an operator who named a mapping.
+
+Detection still earns its place: a mapping declares its source shape, and a mapping pointed at the
+wrong kind of file is **declined** and the ingest fails. The alternative is running paths that cannot
+match and reporting a successful import of nothing.
+
+### XML
+
+The same reader every XML format in Brolga uses. Any `<!DOCTYPE>` is refused outright before parsing,
+which closes the whole entity-expansion family, and a mapping cannot opt out of it.

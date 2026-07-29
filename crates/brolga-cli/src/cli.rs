@@ -202,6 +202,33 @@ pub(crate) enum Command {
     /// The answer to "why did my pack not contain X?", available before the pack exists rather
     /// than by reading one and inferring backwards.
     ExplainPlan(ExplainPlanArgs),
+
+    /// Validate and explain a declarative mapping.
+    #[command(subcommand)]
+    Mapping(MappingCommand),
+}
+
+/// What to do with a mapping document.
+#[derive(Debug, Subcommand)]
+pub(crate) enum MappingCommand {
+    /// Load a mapping and report every problem found.
+    ///
+    /// Exits zero only if the mapping would run. A mapping that fails here would otherwise fail
+    /// partway through a document, which is a worse place to learn about a typo.
+    Validate(MappingFileArgs),
+
+    /// Show what a mapping will do, without a document to do it to.
+    ///
+    /// Includes what the engine will refuse, whatever the mapping says — which is the half a reader
+    /// evaluating a mapping from an untrusted source needs most.
+    Explain(MappingFileArgs),
+}
+
+/// A mapping document to read.
+#[derive(Debug, Args)]
+pub(crate) struct MappingFileArgs {
+    /// The mapping file. YAML or JSON.
+    pub(crate) path: PathBuf,
 }
 
 /// `brolga mcp`.
@@ -288,6 +315,18 @@ pub(crate) struct IngestArgs {
     /// Stop after this many seconds.
     #[arg(long)]
     pub(crate) timeout_seconds: Option<u64>,
+
+    /// Read the files through this declarative mapping, and through nothing else.
+    ///
+    /// The mapping is validated before a byte of feed data is read, and it becomes the only parser
+    /// for this batch — the compiled parsers are not consulted. A mixed batch of a STIX bundle and an
+    /// in-house CSV is therefore two invocations, which is clearer than a precedence rule.
+    ///
+    /// A mapping pointed at the wrong kind of file fails loudly: the mapping declares its source
+    /// shape, and bytes of another shape are declined rather than run against paths that cannot
+    /// match.
+    #[arg(long, value_name = "FILE")]
+    pub(crate) mapping: Option<PathBuf>,
 }
 
 /// How ingestion treats a record it cannot accept.
@@ -677,6 +716,7 @@ impl Command {
             Self::Serve(_) => "serve",
             Self::Completion(_) => "completion",
             Self::Context(_) => "context",
+            Self::Mapping(_) => "mapping",
         }
     }
 }

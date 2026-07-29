@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<report generated="2026-05-01T00:00:00Z">
+  <blocked reason="policy-match">
+    <destination>Bad.Example.COM</destination>
+    <policy>block-known-bad</policy>
+  </blocked>
+  <blocked reason="reputation">
+    <destination>worse.example.net</destination>
+    <policy>block-low-reputation</policy>
+  </blocked>
+  <blocked reason="malformed">
+    <policy>block-known-bad</policy>
+  </blocked>
+</report>
