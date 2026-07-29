@@ -17,6 +17,10 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use brolga_api::{ApiConfig, ApiState, Credential, REQUEST_ID_HEADER, router};
+use brolga_ingest::formats::misp;
+use brolga_ingest::{Document, IngestMode, ParserRegistry, Pipeline};
+use brolga_model::provenance::{MediaType, SensitiveText, SourceOrigin};
+use brolga_security::{CancellationToken, ResourceLimits};
 use brolga_storage::sqlite::SqliteStore;
 use brolga_storage::store::IntelligenceStore;
 
@@ -40,12 +44,88 @@ fn fixture() -> Fixture {
     }
 }
 
+/// A MISP event carrying one attribute, so a lookup has something to find.
+///
+/// MISP rather than STIX deliberately: Brolga's STIX parser does not map `indicator` objects yet
+/// and quarantines them, so a STIX bundle would give this test an empty store and it would pass by
+/// testing nothing. See the `unsupported_object_type` quarantine reason.
+///
+/// The address is written here in the spelling a feed publishes. The lookup asks for it in a
+/// different one. That difference is the point.
+const EVENT: &str = r#"{
+  "Event": {
+    "uuid": "33333333-3333-4333-8333-333333333333",
+    "info": "C2 infrastructure",
+    "date": "2024-01-01",
+    "Attribute": [
+      {
+        "uuid": "44444444-4444-4444-8444-444444444444",
+        "type": "ip-dst",
+        "category": "Network activity",
+        "value": "203.0.113.42",
+        "to_ids": true,
+        "timestamp": "1704067200"
+      }
+    ]
+  }
+}"#;
+
+/// Ingest the event into a store the API will serve.
+fn ingest_event(store: &mut SqliteStore) {
+    let mut registry = ParserRegistry::new();
+    registry.register(misp::MispParser::boxed());
+    let pipeline =
+        Pipeline::new(registry, ResourceLimits::defaults()).in_mode(IngestMode::Permissive);
+
+    let bytes = EVENT.as_bytes();
+    let document = Document {
+        bytes,
+        // Deliberately vague: the bytes are the evidence and the file name is only a hint, so
+        // detection decides the format rather than the label deciding it.
+        media_type: MediaType::new("application/octet-stream").expect("a usable media type"),
+        file_name: Some("event.json"),
+        origin: SourceOrigin::LocalFile {
+            path: SensitiveText::new("event.json").expect("a usable path"),
+        },
+        // Fixed rather than `now`, so the ingest is byte-identical on every run.
+        retrieved_at: brolga_model::Timestamp::parse_rfc3339("2024-01-01T00:00:00Z")
+            .expect("a usable timestamp"),
+    };
+
+    let report = pipeline
+        .ingest_batch(store, &[document], &CancellationToken::never_cancelled())
+        .expect("the event must ingest");
+
+    // A fixture that silently ingested nothing would make every test below pass by testing an
+    // empty store — which is exactly how the STIX version of this fixture failed.
+    assert!(
+        report.accepted() > 0,
+        "the fixture ingested nothing: {report:?}"
+    );
+}
+
 /// Bind the router on an ephemeral port and return the address.
 ///
 /// Port 0 rather than a fixed one: a test that fights another test for a port fails for a reason
 /// that has nothing to do with what it is testing.
 async fn serve(config: ApiConfig) -> SocketAddr {
-    let Fixture { _directory, store } = fixture();
+    serve_store(config, false).await
+}
+
+/// The same, over a store the bundle has been ingested into.
+async fn serve_ingested(config: ApiConfig) -> SocketAddr {
+    serve_store(config, true).await
+}
+
+async fn serve_store(config: ApiConfig, ingested: bool) -> SocketAddr {
+    let Fixture {
+        _directory,
+        mut store,
+    } = fixture();
+
+    if ingested {
+        ingest_event(&mut store);
+    }
 
     let state = Arc::new(ApiState::new(store, config));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -354,5 +434,282 @@ async fn an_empty_store_answers_with_an_empty_collection() {
     assert!(
         !body.contains("next_offset"),
         "no cursor past the end: {body}"
+    );
+}
+
+// -------------------------------------------------------------------------------------------------
+// Context packs
+// -------------------------------------------------------------------------------------------------
+
+/// POST with a JSON body, for the context route.
+async fn post(address: SocketAddr, path: &str, body: &str) -> (u16, String) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let mut stream = tokio::net::TcpStream::connect(address)
+        .await
+        .expect("the server must accept");
+
+    let request = format!(
+        "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+        body.len()
+    );
+
+    stream.write_all(request.as_bytes()).await.expect("write");
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).await.expect("read");
+
+    let text = String::from_utf8_lossy(&raw).into_owned();
+    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((text.as_str(), ""));
+    let status = head
+        .lines()
+        .next()
+        .and_then(|line| line.split_whitespace().nth(1))
+        .and_then(|code| code.parse().ok())
+        .unwrap_or(0);
+
+    (status, body.to_owned())
+}
+
+/// An observable Brolga has never heard of is `unknown` — never `benign`.
+///
+/// The distinction a consumer acts on. Reading "Brolga has not heard of this" as "Brolga says this
+/// is fine" is the expensive direction of the mistake, because it closes an alert that should have
+/// been raised.
+#[tokio::test]
+async fn an_unknown_observable_is_unknown_rather_than_benign() {
+    let address = serve(ApiConfig::loopback(0)).await;
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"203.0.113.99"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"disposition\":\"unknown\""), "{body}");
+    assert!(!body.contains("benign"), "{body}");
+}
+
+/// The pack carries the schema id consumers were built against. Kelpie's client checks it.
+#[tokio::test]
+async fn the_pack_carries_the_agreed_schema_id() {
+    let address = serve(ApiConfig::loopback(0)).await;
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"domain","value":"example.com"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        body.contains("\"schema_version\":\"brolga.context_pack/1.0\""),
+        "{body}"
+    );
+}
+
+/// Absence is stated, not implied. A consumer should not have to infer "Brolga knows nothing" from
+/// an empty array that might equally mean "the field was omitted".
+#[tokio::test]
+async fn a_pack_about_nothing_says_so_in_gaps() {
+    let address = serve(ApiConfig::loopback(0)).await;
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"198.51.100.7"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        body.contains("nothing is stored about this observable"),
+        "{body}"
+    );
+}
+
+/// The pack echoes the *canonical* subject, which may differ from what was sent. A consumer that
+/// caches by the value it sent would otherwise keep two cache entries for one observable.
+#[tokio::test]
+async fn the_pack_reports_the_canonical_subject_not_the_one_sent() {
+    let address = serve(ApiConfig::loopback(0)).await;
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"domain","value":"  EXAMPLE.COM  "}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"value\":\"example.com\""), "{body}");
+}
+
+/// Two spellings of one observable must produce the same `observable_id`, because that id is what
+/// the stored edges point at. If this fails, lookups silently miss data Brolga holds.
+#[tokio::test]
+async fn equivalent_spellings_resolve_to_one_observable() {
+    let address = serve(ApiConfig::loopback(0)).await;
+
+    let extract_id = |body: &str| {
+        body.split("\"observable_id\":\"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .map(str::to_owned)
+    };
+
+    let (_, plain) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"1.1.1.1"}}"#,
+    )
+    .await;
+    let (_, padded) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ipv4","value":"  1.1.1.1  "}}"#,
+    )
+    .await;
+
+    assert_eq!(extract_id(&plain), extract_id(&padded));
+    assert!(extract_id(&plain).is_some(), "{plain}");
+}
+
+#[tokio::test]
+async fn a_malformed_subject_is_a_bad_request() {
+    let address = serve(ApiConfig::loopback(0)).await;
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"not-an-address"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 400, "{body}");
+    assert!(body.contains("\"code\":\"bad_request\""), "{body}");
+}
+
+/// The value came from outside. It must not be reflected back through a diagnostic.
+#[tokio::test]
+async fn a_hostile_subject_value_is_not_echoed_in_the_error() {
+    let address = serve(ApiConfig::loopback(0)).await;
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"<script>alert(1)</script>"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 400, "{body}");
+    assert!(
+        !body.contains("script"),
+        "the value was echoed back: {body}"
+    );
+}
+
+/// A detail level Brolga cannot serve is acknowledged rather than silently downgraded. Telling a
+/// consumer it received L5 when it received L1 makes it stop looking for depth it never got.
+#[tokio::test]
+async fn an_unsupported_detail_level_is_reported_rather_than_pretended() {
+    let address = serve(ApiConfig::loopback(0)).await;
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"1.1.1.1"},"detail_level":"L5"}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"detail_level\":\"L1\""), "{body}");
+    assert!(
+        body.contains("progressive disclosure is not implemented"),
+        "{body}"
+    );
+}
+
+/// The context route is behind the credential like every other route.
+#[tokio::test]
+async fn the_context_route_requires_the_token() {
+    let credential = Credential::new(TOKEN).unwrap();
+    let config = ApiConfig::bind("0.0.0.0:0".parse().unwrap(), Some(credential)).unwrap();
+    let address = serve(config).await;
+
+    let (status, _) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"1.1.1.1"}}"#,
+    )
+    .await;
+    assert_eq!(status, 401);
+}
+
+/// **The test this whole endpoint turns on.**
+///
+/// The bundle publishes `203.0.113.42` inside a STIX pattern. The lookup asks about the same
+/// address in a different spelling and with a different `kind`. If ingest and lookup disagree
+/// about canonicalisation by even one character, the derived observable id differs, and Brolga
+/// answers "unknown" about something it holds an indicator for.
+///
+/// That failure is invisible: an empty pack is exactly what a genuinely unknown address returns.
+/// Nothing else in the suite would catch it.
+#[tokio::test]
+async fn a_lookup_finds_what_ingest_stored() {
+    let address = serve_ingested(ApiConfig::loopback(0)).await;
+
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"  203.0.113.42  "}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        !body.contains("nothing is stored about this observable"),
+        "ingest and lookup disagree about canonicalisation: {body}"
+    );
+    assert!(
+        body.contains("\"claims\":[{") || body.contains("\"relationships\":[{"),
+        "the ingested indicator was not reachable from the lookup: {body}"
+    );
+}
+
+/// Having found it, the pack must attribute it. A claim a case cannot trace back to a source is
+/// one an analyst cannot defend, and enrichment that cannot be defended is worse than none.
+#[tokio::test]
+async fn a_found_observable_carries_the_evidence_it_came_from() {
+    let address = serve_ingested(ApiConfig::loopback(0)).await;
+
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"203.0.113.42"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        body.contains("source_object_id"),
+        "no evidence in the pack: {body}"
+    );
+}
+
+/// An address the bundle does not mention stays unknown even when the store is populated. Without
+/// this, a lookup that returned everything for every subject would pass the test above.
+#[tokio::test]
+async fn a_populated_store_still_reports_unknown_for_an_unrelated_address() {
+    let address = serve_ingested(ApiConfig::loopback(0)).await;
+
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"192.0.2.200"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"disposition\":\"unknown\""), "{body}");
+    assert!(
+        body.contains("nothing is stored about this observable"),
+        "{body}"
     );
 }

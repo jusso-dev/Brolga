@@ -45,14 +45,17 @@
 
 pub mod auth;
 pub mod config;
+pub mod context;
 pub mod error;
 pub mod routes;
 pub mod schema;
 pub mod server;
 pub mod state;
+pub mod subject;
 
 pub use auth::{Credential, CredentialRejected};
 pub use config::{ApiConfig, ConfigRejected};
+pub use context::{CONTEXT_PACK_SCHEMA, ContextPack, ContextRequest};
 pub use error::{ApiError, ErrorBody, RequestId};
 pub use schema::{API_PREFIX, ERROR_SCHEMA, RESPONSE_SCHEMA};
 pub use server::{REQUEST_ID_HEADER, router, serve};
