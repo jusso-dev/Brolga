@@ -25,12 +25,17 @@
 //! storage work on a blocking pool; the cancellation model that surrounds that belongs to
 //! `brolga-security`.
 
+use std::collections::BTreeSet;
+
 use brolga_model::claim::Claim;
-use brolga_model::entity::Entity;
+use brolga_model::entity::{Entity, EntityKind};
 use brolga_model::id::Id;
 use brolga_model::provenance::{ContentHash, SourceObject};
-use brolga_model::relationship::{NodeRef, Relationship};
+use brolga_model::relationship::{NodeRef, Relationship, RelationshipKind};
 use brolga_model::sighting::Sighting;
+use brolga_model::status::LifecycleStatus;
+use brolga_model::temporal::Timestamp;
+use serde::{Deserialize, Serialize};
 
 use crate::blob::{
     BlobMetadata, BlobOutcome, BlobRequest, RetentionClass, RetentionEvent, RetrievedBlob,
@@ -175,6 +180,221 @@ impl Default for Page {
     }
 }
 
+/// Which way an edge points, relative to the node being asked about.
+///
+/// A closed enum rather than a `&str` or a boolean pair, for the reason the whole module exists: a
+/// caller names a direction, never a column. A relationship is directed, and collapsing that into
+/// "connected" would turn "this malware targets this sector" into "this sector targets this
+/// malware".
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(rename_all = "snake_case")]
+#[non_exhaustive]
+pub enum Direction {
+    /// Edges that point away from the node.
+    Outgoing,
+    /// Edges that point at the node.
+    Incoming,
+    /// Edges at either end.
+    ///
+    /// The default, because a caller asking "what is connected to this" almost never means "only
+    /// what points away from it".
+    #[default]
+    Either,
+}
+
+impl Direction {
+    /// Whether an edge with this node as its source is in scope.
+    #[must_use]
+    pub const fn includes_source(self) -> bool {
+        matches!(self, Self::Outgoing | Self::Either)
+    }
+
+    /// Whether an edge with this node as its target is in scope.
+    #[must_use]
+    pub const fn includes_target(self) -> bool {
+        matches!(self, Self::Incoming | Self::Either)
+    }
+
+    /// A stable label, for diagnostics and recorded decisions.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Outgoing => "outgoing",
+            Self::Incoming => "incoming",
+            Self::Either => "either",
+        }
+    }
+}
+
+/// A typed filter over stored entities.
+///
+/// Every field is a closed enum, a typed value, or a set of them. There is no free-text predicate
+/// and no field name a caller can supply, so this is what the safe query language planned for
+/// `v1.0.0` compiles *to* rather than a place where it could be bypassed.
+///
+/// An empty set means **unconstrained**, not "match nothing". A filter that silently matched
+/// nothing when a caller forgot to populate it would report an empty graph as a confident answer.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+#[non_exhaustive]
+pub struct EntityQuery {
+    /// Which kinds to admit. Empty admits every kind.
+    pub kinds: BTreeSet<EntityKind>,
+    /// Which lifecycle statuses to admit. Empty admits every status.
+    ///
+    /// Not defaulted to "current only". A caller investigating why something was withdrawn needs
+    /// the revoked records, and a default that hid them would answer a different question from the
+    /// one asked.
+    pub statuses: BTreeSet<LifecycleStatus>,
+    /// Admit only entities last seen on or after the start of this instant's UTC day.
+    ///
+    /// **UTC-day granularity, deliberately.** `last_seen` is stored as RFC 3339 text with variable
+    /// subsecond precision, and lexicographic order is not chronological order *within* a second —
+    /// `…:00Z` sorts after `…:00.5Z`. Comparing at second or finer granularity would therefore be
+    /// quietly wrong for records near the bound, and a filter that is silently wrong is worse than
+    /// one that states its granularity. A day boundary is exact because the date prefix is
+    /// fixed-width.
+    ///
+    /// An entity with no recorded `last_seen` does not match a `last_seen` bound.
+    pub last_seen_from: Option<Timestamp>,
+    /// Admit only entities last seen before the start of this instant's UTC day.
+    ///
+    /// Same granularity, and the same reason, as [`Self::last_seen_from`].
+    pub last_seen_before: Option<Timestamp>,
+}
+
+impl EntityQuery {
+    /// A query that constrains nothing.
+    #[must_use]
+    pub fn unfiltered() -> Self {
+        Self::default()
+    }
+
+    /// Admit one more kind.
+    #[must_use]
+    pub fn with_kind(mut self, kind: EntityKind) -> Self {
+        self.kinds.insert(kind);
+        self
+    }
+
+    /// Admit one more lifecycle status.
+    #[must_use]
+    pub fn with_status(mut self, status: LifecycleStatus) -> Self {
+        self.statuses.insert(status);
+        self
+    }
+
+    /// Admit only records whose assertion currently stands.
+    ///
+    /// Spelled out rather than left to each caller, because "current" is
+    /// [`LifecycleStatus::is_current`]'s two variants and a caller that remembers only `Active`
+    /// drops every deprecated-but-standing record without noticing.
+    #[must_use]
+    pub fn only_current(mut self) -> Self {
+        for status in [LifecycleStatus::Active, LifecycleStatus::Deprecated] {
+            self.statuses.insert(status);
+        }
+        self
+    }
+
+    /// Bound the earliest `last_seen` admitted, at UTC-day granularity.
+    #[must_use]
+    pub const fn last_seen_from(mut self, at: Timestamp) -> Self {
+        self.last_seen_from = Some(at);
+        self
+    }
+
+    /// Bound the latest `last_seen` admitted, at UTC-day granularity.
+    #[must_use]
+    pub const fn last_seen_before(mut self, at: Timestamp) -> Self {
+        self.last_seen_before = Some(at);
+        self
+    }
+
+    /// Whether this query constrains nothing at all.
+    ///
+    /// A cost signal: an unfiltered search is a scan, and a caller that can see that before running
+    /// it can decide whether it meant to.
+    #[must_use]
+    pub fn is_unfiltered(&self) -> bool {
+        self.kinds.is_empty()
+            && self.statuses.is_empty()
+            && self.last_seen_from.is_none()
+            && self.last_seen_before.is_none()
+    }
+}
+
+/// A typed filter over the edges at one node.
+///
+/// The adjacency query `docs/ARCHITECTURE.md` commits to: relational adjacency tables, read one hop
+/// at a time, so a traversal's depth is the caller's decision rather than the database's. The
+/// `relationships_source` and `relationships_target` indexes are `(ref, kind)`, which is why kind is
+/// a filter here and not something applied after the rows come back.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[non_exhaustive]
+pub struct EdgeQuery {
+    /// The node whose edges are wanted.
+    pub node: NodeRef,
+    /// Which way the edges point, relative to that node.
+    pub direction: Direction,
+    /// Which relationship kinds to admit. Empty admits every kind.
+    pub kinds: BTreeSet<RelationshipKind>,
+    /// Which lifecycle statuses to admit. Empty admits every status.
+    pub statuses: BTreeSet<LifecycleStatus>,
+}
+
+impl EdgeQuery {
+    /// Every edge at a node, in the given direction.
+    #[must_use]
+    pub fn at(node: NodeRef, direction: Direction) -> Self {
+        Self {
+            node,
+            direction,
+            kinds: BTreeSet::new(),
+            statuses: BTreeSet::new(),
+        }
+    }
+
+    /// Admit one more relationship kind.
+    #[must_use]
+    pub fn with_kind(mut self, kind: RelationshipKind) -> Self {
+        self.kinds.insert(kind);
+        self
+    }
+
+    /// Admit one more lifecycle status.
+    #[must_use]
+    pub fn with_status(mut self, status: LifecycleStatus) -> Self {
+        self.statuses.insert(status);
+        self
+    }
+
+    /// Admit only edges whose assertion currently stands.
+    #[must_use]
+    pub fn only_current(mut self) -> Self {
+        for status in [LifecycleStatus::Active, LifecycleStatus::Deprecated] {
+            self.statuses.insert(status);
+        }
+        self
+    }
+
+    /// The same filter asked about a different node.
+    ///
+    /// What a traversal does at every hop: the predicate is the caller's, and only the node moves.
+    #[must_use]
+    pub fn about(&self, node: NodeRef) -> Self {
+        Self {
+            node,
+            direction: self.direction,
+            kinds: self.kinds.clone(),
+            statuses: self.statuses.clone(),
+        }
+    }
+}
+
 /// What migrating did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MigrationReport {
@@ -279,6 +499,45 @@ pub trait StoreRead {
     /// Returns a [`StorageError`](crate::error::StorageError) if the query fails or a stored
     /// document cannot be decoded.
     fn relationships_touching(&self, node: &NodeRef, page: Page) -> Result<Vec<Relationship>>;
+
+    /// Entities matching a typed filter, in identifier order, bounded by `page`.
+    ///
+    /// Ordered by identifier rather than by recency, because identifier order is a *total* order
+    /// over a unique column: two runs against unchanged data return the same records in the same
+    /// order, and page two does not overlap page one because a record's `last_seen` moved between
+    /// the two reads. Ordering by a mutable column is how offset paging silently skips and repeats
+    /// rows.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StorageError`](crate::error::StorageError) if the query fails or a stored
+    /// document cannot be decoded.
+    fn search_entities(&self, query: &EntityQuery, page: Page) -> Result<Vec<Entity>>;
+
+    /// Edges at one node matching a typed filter, in identifier order, bounded by `page`.
+    ///
+    /// One hop. Recursion is the caller's, held to the caller's budget, because a recursive query
+    /// that decides its own depth inside the database is a denial of service with an index on it.
+    ///
+    /// Identifier order for the same reason as [`Self::search_entities`]: a traversal that returned
+    /// neighbours in a different order between runs would make every downstream comparison
+    /// worthless.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StorageError`](crate::error::StorageError) if the query fails or a stored
+    /// document cannot be decoded.
+    fn edges_at(&self, query: &EdgeQuery, page: Page) -> Result<Vec<Relationship>>;
+
+    /// How many edges the same filter would match, without reading any of them.
+    ///
+    /// The cost estimate a caller checks *before* expanding a node. Reading a million edges to
+    /// discover there were a million of them is the failure this exists to prevent.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn degree(&self, query: &EdgeQuery) -> Result<u64>;
 
     /// Claims about a subject, bounded by `page`.
     ///
@@ -645,6 +904,71 @@ mod tests {
                 "{table} is not a plain identifier",
             );
         }
+    }
+
+    #[test]
+    fn an_empty_query_constrains_nothing_and_says_so() {
+        // The cost signal a caller checks before running a scan it did not mean to ask for.
+        assert!(EntityQuery::unfiltered().is_unfiltered());
+        assert!(
+            !EntityQuery::unfiltered()
+                .with_kind(EntityKind::ThreatActor)
+                .is_unfiltered()
+        );
+        assert!(
+            !EntityQuery::unfiltered()
+                .last_seen_from(brolga_model::temporal::Timestamp::unix_epoch())
+                .is_unfiltered()
+        );
+    }
+
+    #[test]
+    fn current_means_both_standing_statuses_not_just_active() {
+        // A caller that remembers only `Active` drops every deprecated-but-standing record without
+        // noticing, which is why this is spelled out once here rather than at each call site.
+        let query = EntityQuery::unfiltered().only_current();
+        assert!(query.statuses.contains(&LifecycleStatus::Active));
+        assert!(query.statuses.contains(&LifecycleStatus::Deprecated));
+        assert_eq!(query.statuses.len(), 2);
+
+        for status in [
+            LifecycleStatus::Revoked,
+            LifecycleStatus::Superseded,
+            LifecycleStatus::Expired,
+        ] {
+            assert!(!query.statuses.contains(&status));
+            assert!(!status.is_current());
+        }
+    }
+
+    #[test]
+    fn a_direction_admits_exactly_the_ends_it_names() {
+        // A relationship is directed. Treating one direction as both would turn "this malware
+        // targets this sector" into "this sector targets this malware".
+        assert!(Direction::Outgoing.includes_source());
+        assert!(!Direction::Outgoing.includes_target());
+        assert!(Direction::Incoming.includes_target());
+        assert!(!Direction::Incoming.includes_source());
+        assert!(Direction::Either.includes_source() && Direction::Either.includes_target());
+        assert_eq!(Direction::default(), Direction::Either);
+    }
+
+    #[test]
+    fn moving_a_filter_to_another_node_keeps_the_predicate() {
+        // What a traversal does at every hop. If the predicate drifted, a walk would widen as it
+        // went — which is exactly the failure the budgets exist to prevent.
+        let first = NodeRef::Entity(Id::derive(&["entity", "a"]));
+        let second = NodeRef::Entity(Id::derive(&["entity", "b"]));
+
+        let query = EdgeQuery::at(first, Direction::Outgoing)
+            .with_kind(RelationshipKind::Uses)
+            .only_current();
+        let moved = query.about(second);
+
+        assert_eq!(moved.node, second);
+        assert_eq!(moved.direction, query.direction);
+        assert_eq!(moved.kinds, query.kinds);
+        assert_eq!(moved.statuses, query.statuses);
     }
 
     #[test]
