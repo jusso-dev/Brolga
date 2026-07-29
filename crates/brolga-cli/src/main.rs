@@ -21,6 +21,7 @@ mod cli;
 mod commands;
 mod context_command;
 mod exit;
+mod export_command;
 mod fetch_command;
 mod graph_commands;
 mod mapping_command;

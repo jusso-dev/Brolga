@@ -88,6 +88,37 @@ pub(crate) fn context<Out: Write, Err: Write>(
         }
     };
 
+    // `--format` writes the pack in an export format instead of printing it. The policy decision is
+    // made inside the export, after the format is known — see `brolga_export` for why that ordering is
+    // the only one that distinguishes reading your own pack from handing it to somebody else.
+    if let Some(format) = args.format.as_deref() {
+        let registry = brolga_export::ExporterRegistry::shipped();
+        return match registry.export(format, &pack, &PolicyIdentity::local_operator()) {
+            Ok(exported) => {
+                // Bytes to stdout, unchanged. An export is somebody else's input, so nothing is
+                // appended, wrapped, or re-encoded.
+                if streams.write_result_bytes(&exported.bytes).is_err() {
+                    return ExitCode::Io;
+                }
+                // What it cost goes to stderr, so a shell redirect captures the artefact and the
+                // operator still learns what is missing from it.
+                for loss in &exported.declared_losses {
+                    let _ = streams.note(&format!("not carried by `{format}`: {loss}"));
+                }
+                ExitCode::Success
+            }
+            Err(error) => {
+                let _ = streams.problem(&error.to_string());
+                match error {
+                    brolga_export::ExportError::UnknownFormat { .. } => ExitCode::Usage,
+                    brolga_export::ExportError::Denied { .. } => ExitCode::PolicyDenied,
+                    brolga_export::ExportError::Unencodable { .. } => ExitCode::Failure,
+                    _ => ExitCode::Failure,
+                }
+            }
+        };
+    }
+
     match streams.mode() {
         OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let _ = streams.result_json(&serde_json::to_value(&pack).unwrap_or_default());

@@ -196,6 +196,7 @@ dependencies = [
  "brolga-api",
  "brolga-config",
  "brolga-connectors",
+ "brolga-export",
  "brolga-graph",
  "brolga-ingest",
  "brolga-model",
@@ -240,6 +241,19 @@ dependencies = [
  "serde_json",
  "thiserror",
  "ureq",
+]
+
+[[package]]
+name = "brolga-export"
+version = "0.1.0"
+dependencies = [
+ "brolga-config",
+ "brolga-model",
+ "brolga-security",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "thiserror",
 ]
 
 [[package]]

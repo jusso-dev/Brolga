@@ -246,6 +246,18 @@ impl<Out: Write, Err: Write> Streams<Out, Err> {
     /// # Errors
     ///
     /// Returns an [`io::Error`] if the stream cannot be written.
+    /// Write raw bytes to stdout, unchanged.
+    ///
+    /// For an export, whose bytes are somebody else's input: nothing is appended, wrapped, or
+    /// re-encoded, and no trailing newline is added because a consumer's parser may care.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the stream cannot be written.
+    pub(crate) fn write_result_bytes(&mut self, bytes: &[u8]) -> io::Result<()> {
+        self.out.write_all(bytes)
+    }
+
     pub(crate) fn note(&mut self, line: &str) -> io::Result<()> {
         if self.quiet {
             return Ok(());
