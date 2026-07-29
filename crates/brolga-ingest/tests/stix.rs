@@ -22,6 +22,7 @@ const BUNDLE: &str = include_str!("fixtures/stix/bundle.json");
 const ATTACK: &str = include_str!("fixtures/stix/attack.json");
 const BARE: &str = include_str!("fixtures/stix/bare-object.json");
 const INDICATORS: &str = include_str!("fixtures/stix/indicators.json");
+const BUNDLE_20: &str = include_str!("fixtures/stix/bundle-2.0.json");
 
 fn pipeline(mode: IngestMode) -> Pipeline {
     let mut registry = ParserRegistry::new();
@@ -1126,4 +1127,157 @@ fn an_indicator_stating_more_types_than_the_limit_is_refused_rather_than_truncat
         "{}",
         report.rejected[0].reason
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// "STIX 2.0 differences" — https://github.com/jusso-dev/Brolga/issues/52
+// ---------------------------------------------------------------------------------------------
+
+/// 2.0 kept the indicator vocabulary in `labels`; 2.1 split it into `indicator_types`. A reader
+/// that only knew the 2.1 spelling would map every 2.0 indicator present *and* undispositioned —
+/// which reads to a consumer exactly like a publisher who declined to assess it.
+#[test]
+fn a_stix_2_0_indicator_takes_its_disposition_from_labels() {
+    use brolga_model::{Assertion, Disposition};
+
+    let report = prepare(BUNDLE_20.as_bytes());
+    let about = claims_about(&report, &ipv4("203.0.113.42"));
+
+    assert!(
+        about
+            .iter()
+            .any(|claim| claim.assertion == Assertion::Disposition(Disposition::Malicious)),
+        "`labels` did not reach the disposition: {about:?}"
+    );
+}
+
+/// 2.0 has no top-level SCOs at all — an observable exists only inside `observed-data`. Skipping
+/// that object would make a 2.0 bundle of observations contribute nothing a lookup could find,
+/// which is #95 in a different spelling.
+#[test]
+fn stix_2_0_observed_data_contributes_the_observables_it_embeds() {
+    let report = prepare(BUNDLE_20.as_bytes());
+
+    assert!(
+        !claims_about(&report, &ipv4("198.51.100.5")).is_empty(),
+        "the embedded address was not represented: {:?}",
+        report.rejected
+    );
+
+    let domain = brolga_model::Observable::DomainName(
+        brolga_model::observable::DomainName::new("staging.example.net").unwrap(),
+    );
+    assert!(
+        !claims_about(&report, &domain).is_empty(),
+        "`STAGING.EXAMPLE.NET.` canonicalises the same way any other domain does"
+    );
+}
+
+/// An observation is not a claim. `number_observed` and the window are what corroboration is
+/// computed from, and a parser that recorded only claims would throw them away.
+#[test]
+fn observed_data_becomes_a_sighting_with_its_count_and_window() {
+    let report = prepare(BUNDLE_20.as_bytes());
+    let sighting = report
+        .records
+        .iter()
+        .find_map(|record| match record {
+            ParsedRecord::Sighting(sighting)
+                if sighting.subject
+                    == brolga_model::NodeRef::Observable(ipv4("198.51.100.5").id()) =>
+            {
+                Some(sighting)
+            }
+            _ => None,
+        })
+        .expect("a sighting of the embedded address");
+
+    assert_eq!(sighting.count.get(), 12);
+    assert_eq!(sighting.first_seen.to_rfc3339(), "2024-01-01T00:00:00Z");
+    assert_eq!(sighting.last_seen.to_rfc3339(), "2024-01-01T06:00:00Z");
+    assert!(
+        sighting.observer.is_some(),
+        "`created_by_ref` names an identity in this bundle, so the sighting is attributed"
+    );
+}
+
+/// An observer Brolga cannot resolve is `None`, not a fabricated entity. An invented observer
+/// would look like corroboration, which is the one thing a sighting exists to measure.
+#[test]
+fn an_observation_with_no_resolvable_observer_is_unattributed_rather_than_invented() {
+    let report = prepare(BUNDLE_20.as_bytes());
+    let subject = brolga_model::NodeRef::Observable(ipv4("198.51.100.77").id());
+
+    let sighting = report
+        .records
+        .iter()
+        .find_map(|record| match record {
+            ParsedRecord::Sighting(sighting) if sighting.subject == subject => Some(sighting),
+            _ => None,
+        })
+        .expect("a sighting of the unattributed observation");
+
+    assert!(
+        sighting.observer.is_none(),
+        "no `created_by_ref`, so nothing may stand in for one"
+    );
+    assert_eq!(sighting.count.get(), 3);
+}
+
+/// Zero is not "unknown". A publisher who wrote `number_observed: 0` said something impossible,
+/// and defaulting it to one would invent an observation that nobody reported.
+#[test]
+fn an_observation_counted_zero_times_is_quarantined_rather_than_defaulted() {
+    let report = prepare(BUNDLE_20.as_bytes());
+    assert!(
+        report
+            .rejected
+            .iter()
+            .any(|record| record.reason_kind == "unusable_number_observed"),
+        "{:?}",
+        report.rejected
+    );
+    assert!(
+        claims_about(&report, &ipv4("198.51.100.9")).is_empty(),
+        "the impossible count was mapped anyway"
+    );
+}
+
+/// An `observed-data` holding only artefacts Brolga has no canonicaliser for would record an
+/// observation of nothing. Saying so is more useful than writing an empty observation.
+#[test]
+fn an_observation_of_nothing_mappable_is_quarantined_with_a_reason() {
+    let report = prepare(BUNDLE_20.as_bytes());
+    assert!(
+        report
+            .rejected
+            .iter()
+            .any(|record| record.reason_kind == "no_mappable_observable"),
+        "{:?}",
+        report.rejected
+    );
+}
+
+/// The whole 2.0 fixture. Counts, not "more than zero".
+#[test]
+fn a_stix_2_0_bundle_ingests() {
+    let mut store = store();
+    let report = ingest(&mut store, IngestMode::Permissive, BUNDLE_20.as_bytes());
+
+    assert!(report.reconciles(), "{report:?}");
+    // identity and malware.
+    assert_eq!(store.count(RecordKind::Entity).unwrap(), 2);
+    // Three mapped observables across the accepted `observed-data`, one sighting each.
+    assert_eq!(store.count(RecordKind::Sighting).unwrap(), 3);
+    assert_eq!(store.count(RecordKind::Relationship).unwrap(), 1);
+    // Two observations refused: the zero count and the one holding nothing mappable.
+    assert_eq!(report.rejected, 2, "{report:?}");
+}
+
+/// A 2.0 bundle must be recognised without its objects carrying `spec_version`, which in 2.0 sits
+/// on the bundle rather than on each object.
+#[test]
+fn a_stix_2_0_bundle_is_detected() {
+    let report = prepare(BUNDLE_20.as_bytes());
+    assert_eq!(report.parser.as_str(), "brolga.stix.bundle");
 }

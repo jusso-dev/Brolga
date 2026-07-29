@@ -288,6 +288,12 @@ pub fn no_control_characters(kind: &'static str, raw: &str) -> Result<(), CanonE
     Ok(())
 }
 
+/// A canonicaliser, as a function pointer.
+///
+/// Named because several parsers hold a table mapping a source's field name to the canonicaliser it
+/// implies, and the mapping reads as a table only if its value type has a name.
+pub type Canonicaliser = fn(&str) -> Result<Canonical<brolga_model::Observable>, CanonError>;
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,

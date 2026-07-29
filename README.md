@@ -26,12 +26,14 @@ What works today:
 
 What `v0.1.0` did not include: ingestion, the intelligence graph, compression, context packs, the HTTP API, the MCP server, connectors, and plugins. Ingestion arrived in `v0.2.0` — see below. The rest have not.
 
-**`v0.2.0 — Core ingestion` is complete.** STIX 2.1 and MITRE ATT&CK, MISP events and warning
-lists, and CSV/TSV/JSON/NDJSON/plain-text feeds all parse into canonical records, with original
+**`v0.2.0 — Core ingestion` is complete.** STIX 2.0 and 2.1 and MITRE ATT&CK, MISP events and
+warning lists, Sigma and YARA rules, OpenIOC and IODEF documents, CEF/LEEF/syslog telemetry, and
+CSV/TSV/JSON/NDJSON/plain-text feeds all parse into canonical records, with original
 source bytes retained content-addressed, strict and permissive modes, and a quarantine that keeps
 what it could not accept.
 
-**`brolga ingest` works.** Point it at a STIX 2.1 bundle, a MISP export, or a CSV/NDJSON/plain-text
+**`brolga ingest` works.** Point it at a STIX bundle, a MISP export, a Sigma or YARA rule, an
+OpenIOC or IODEF document, a CEF/LEEF/syslog file, or a CSV/NDJSON/plain-text
 indicator list and the records land in a local SQLite database, with the original bytes retained
 content-addressed and anything unreadable kept in quarantine with a reason.
 

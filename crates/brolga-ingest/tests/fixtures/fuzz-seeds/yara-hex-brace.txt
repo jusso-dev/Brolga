@@ -1,0 +1,1 @@
+rule R { strings: $h = { AA BB } condition: $h }

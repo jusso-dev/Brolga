@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<IODEF-Document version="1.00" xmlns="urn:ietf:params:xml:ns:iodef-1.0">
+  <Incident purpose="reporting">
+    <IncidentID name="csirt.example.com">189493</IncidentID>
+    <ReportTime>2024-01-01T00:00:00+00:00</ReportTime>
+    <Description>Scanning activity against the perimeter.</Description>
+    <Assessment>
+      <Impact severity="high" type="recon"/>
+    </Assessment>
+    <EventData>
+      <Flow>
+        <System category="source">
+          <Node>
+            <Address category="ipv4-addr">198.51.100.60</Address>
+            <Address category="ipv4-net">198.51.100.5/24</Address>
+            <Address category="asn">64512</Address>
+          </Node>
+        </System>
+      </Flow>
+    </EventData>
+  </Incident>
+  <Incident purpose="mitigation">
+    <IncidentID name="csirt.example.com">189494</IncidentID>
+    <ReportTime>2024-01-02T00:00:00+00:00</ReportTime>
+    <EventData>
+      <Flow><System category="source"><Node>
+        <Address category="e-mail">sender@example.com</Address>
+      </Node></System></Flow>
+    </EventData>
+  </Incident>
+</IODEF-Document>

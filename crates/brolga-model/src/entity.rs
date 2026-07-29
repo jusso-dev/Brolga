@@ -66,6 +66,18 @@ pub enum EntityKind {
     Location,
     /// An industry sector.
     Sector,
+    /// A published rule that describes how to *detect* something.
+    ///
+    /// A Sigma rule, a YARA rule, an OpenIOC definition. Distinct from every kind above, and the
+    /// distinction is the point: a detection is a statement about how to find activity, not a
+    /// statement about the activity. Filing one under [`Self::Tool`] would say a defender's rule is
+    /// an attacker's instrument; filing it under [`Self::AttackTechnique`] would say the rule *is*
+    /// the behaviour it looks for. Both are wrong in ways that only surface once somebody counts
+    /// techniques and finds the detections mixed in.
+    ///
+    /// Brolga stores rules; it does not run them. Nothing in the canonical model evaluates a
+    /// condition, matches a string, or executes a query.
+    DetectionRule,
 }
 
 impl EntityKind {
@@ -91,6 +103,7 @@ impl EntityKind {
             Self::Asset,
             Self::Location,
             Self::Sector,
+            Self::DetectionRule,
         ]
     }
 
@@ -112,6 +125,7 @@ impl EntityKind {
             Self::Asset => "asset",
             Self::Location => "location",
             Self::Sector => "sector",
+            Self::DetectionRule => "detection_rule",
         }
     }
 }
@@ -159,6 +173,11 @@ impl Identifiable for Entity {
 
 impl VersionedSchema for Entity {
     const SCHEMA_NAME: &'static str = "brolga.entity";
+    // Bumped for `EntityKind::DetectionRule`. Adding a variant to a `#[non_exhaustive]` enum is
+    // additive, so it is a minor change by the rule in `VersionedSchema`: an older consumer meets a
+    // discriminator it does not know, which is the case `#[non_exhaustive]` exists to make handled
+    // rather than fatal. No field was removed, renamed, retyped, or made required.
+    const SCHEMA_MINOR: u16 = 1;
 }
 
 impl Entity {
@@ -352,7 +371,7 @@ mod tests {
         assert_eq!(
             json.get("schema_version")
                 .and_then(serde_json::Value::as_str),
-            Some("brolga.entity/1.0"),
+            Some("brolga.entity/1.1"),
         );
         // Empty, but present: a reader must never be able to mistake absence for "unrestricted".
         assert_eq!(json.get("markings"), Some(&serde_json::json!([])));
@@ -509,10 +528,11 @@ mod all_variants_tests {
                 | EntityKind::Report
                 | EntityKind::Asset
                 | EntityKind::Location
-                | EntityKind::Sector => {}
+                | EntityKind::Sector
+                | EntityKind::DetectionRule => {}
             }
         }
-        assert_eq!(EntityKind::all().len(), 14);
+        assert_eq!(EntityKind::all().len(), 15);
 
         let mut names: Vec<_> = EntityKind::all().iter().map(|k| k.as_str()).collect();
         names.sort_unstable();

@@ -19,6 +19,7 @@
 
 use brolga_ingest::detect::FormatHint;
 use brolga_ingest::formats::stix_pattern;
+use brolga_ingest::formats::{delimited, misp, sigma, stix, telemetry, xml, yara};
 use brolga_ingest::testing::{CatchAllParser, TestRecordsParser};
 use brolga_ingest::{Document, ParserRegistry, Pipeline};
 use brolga_model::{
@@ -33,6 +34,159 @@ fn registry() -> ParserRegistry {
     registry.register(TestRecordsParser::boxed());
     registry.register(CatchAllParser::boxed());
     registry
+}
+
+/// Every parser a shipped binary can select from.
+///
+/// Separate from [`registry`], which holds the reference parsers the pipeline properties are stated
+/// against. This one is what the seed corpus is driven through, because a seed that reaches a
+/// branch of the CEF reader proves nothing against a test parser.
+fn shipping_registry() -> ParserRegistry {
+    let mut registry = ParserRegistry::new();
+    registry.register(stix::StixParser::boxed());
+    registry.register(misp::MispParser::boxed());
+    registry.register(delimited::DelimitedParser::boxed());
+    registry.register(delimited::JsonLinesParser::boxed());
+    registry.register(sigma::SigmaParser::boxed());
+    registry.register(yara::YaraParser::boxed());
+    registry.register(telemetry::TelemetryParser::boxed());
+    registry.register(xml::OpenIocParser::boxed());
+    registry.register(xml::IodefParser::boxed());
+    registry
+}
+
+/// The seed corpus, one minimal input per parser branch.
+///
+/// Held as files rather than as string literals so a fuzzing harness
+/// ([#56](https://github.com/jusso-dev/Brolga/issues/56)) inherits a corpus rather than a blank
+/// directory, and so adding a seed does not require editing this file.
+const SEEDS: &[(&str, &[u8])] = &[
+    (
+        "cef-truncated-header",
+        include_bytes!("fixtures/fuzz-seeds/cef-truncated-header.txt"),
+    ),
+    (
+        "cef-trailing-escape",
+        include_bytes!("fixtures/fuzz-seeds/cef-trailing-escape.txt"),
+    ),
+    (
+        "cef-escaped-pipe",
+        include_bytes!("fixtures/fuzz-seeds/cef-escaped-pipe.txt"),
+    ),
+    (
+        "leef-missing-delimiter",
+        include_bytes!("fixtures/fuzz-seeds/leef-missing-delimiter.txt"),
+    ),
+    (
+        "syslog-priority-only",
+        include_bytes!("fixtures/fuzz-seeds/syslog-priority-only.txt"),
+    ),
+    (
+        "syslog-oversized-priority",
+        include_bytes!("fixtures/fuzz-seeds/syslog-oversized-priority.txt"),
+    ),
+    (
+        "yara-unclosed-body",
+        include_bytes!("fixtures/fuzz-seeds/yara-unclosed-body.txt"),
+    ),
+    (
+        "yara-trailing-escape",
+        include_bytes!("fixtures/fuzz-seeds/yara-trailing-escape.txt"),
+    ),
+    (
+        "yara-regex-brace",
+        include_bytes!("fixtures/fuzz-seeds/yara-regex-brace.txt"),
+    ),
+    (
+        "yara-hex-brace",
+        include_bytes!("fixtures/fuzz-seeds/yara-hex-brace.txt"),
+    ),
+    (
+        "yara-not-a-rule-keyword",
+        include_bytes!("fixtures/fuzz-seeds/yara-not-a-rule-keyword.txt"),
+    ),
+    (
+        "sigma-empty-title",
+        include_bytes!("fixtures/fuzz-seeds/sigma-empty-title.txt"),
+    ),
+    (
+        "sigma-modifier-only",
+        include_bytes!("fixtures/fuzz-seeds/sigma-modifier-only.txt"),
+    ),
+    (
+        "sigma-empty-documents",
+        include_bytes!("fixtures/fuzz-seeds/sigma-empty-documents.txt"),
+    ),
+    (
+        "xml-internal-entity",
+        include_bytes!("fixtures/fuzz-seeds/xml-internal-entity.txt"),
+    ),
+    (
+        "xml-external-entity",
+        include_bytes!("fixtures/fuzz-seeds/xml-external-entity.txt"),
+    ),
+    (
+        "xml-unclosed-elements",
+        include_bytes!("fixtures/fuzz-seeds/xml-unclosed-elements.txt"),
+    ),
+    (
+        "xml-mismatched-tags",
+        include_bytes!("fixtures/fuzz-seeds/xml-mismatched-tags.txt"),
+    ),
+    (
+        "stix-pattern-truncated",
+        include_bytes!("fixtures/fuzz-seeds/stix-pattern-truncated.txt"),
+    ),
+    (
+        "stix-pattern-conjunction",
+        include_bytes!("fixtures/fuzz-seeds/stix-pattern-conjunction.txt"),
+    ),
+    (
+        "stix-zero-observation",
+        include_bytes!("fixtures/fuzz-seeds/stix-zero-observation.txt"),
+    ),
+];
+
+/// Every seed, through every shipping parser, with no unwind.
+///
+/// Not a property test: the corpus is finite and each entry is there because it reaches a specific
+/// branch. A seed that started panicking would be a regression in the exact code it was added for.
+#[test]
+fn every_fuzz_seed_is_refused_or_read_but_never_panics() {
+    let pipeline = Pipeline::with_defaults(shipping_registry());
+    let cancel = CancellationToken::never_cancelled();
+
+    for (name, bytes) in SEEDS {
+        for media_type in [
+            "application/octet-stream",
+            "text/plain",
+            "application/xml",
+            "application/stix+json",
+        ] {
+            let outcome = pipeline.prepare(&document(bytes, media_type), &cancel);
+            assert!(
+                outcome.is_ok() || outcome.is_err(),
+                "{name} under {media_type}"
+            );
+        }
+    }
+}
+
+/// The two seeds that exist for a security property rather than for a crash. Both carry a DTD, and
+/// both must be refused *for that reason* — a refusal for some other reason would mean the DTD
+/// check is not what stopped them, and could stop being true without any test noticing.
+#[test]
+fn the_xml_entity_seeds_are_refused_by_the_dtd_check_itself() {
+    for name in ["xml-internal-entity", "xml-external-entity"] {
+        let (_, bytes) = SEEDS
+            .iter()
+            .find(|(seed, _)| *seed == name)
+            .expect("the seed is in the corpus");
+
+        let error = brolga_ingest::formats::xml::read_document(bytes)
+            .expect_err("a document with a DTD is refused");
+        assert!(error.to_string().contains("DOCTYPE"), "{name}: {error}");
+    }
 }
 
 fn origin() -> SourceOrigin {
