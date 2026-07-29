@@ -134,6 +134,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "brolga-graph"
+version = "0.1.0"
+dependencies = [
+ "brolga-model",
+ "brolga-security",
+ "brolga-storage",
+ "serde",
+ "tempfile",
+ "thiserror",
+]
+
+[[package]]
 name = "brolga-ingest"
 version = "0.1.0"
 dependencies = [

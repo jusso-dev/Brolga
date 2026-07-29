@@ -83,6 +83,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "graph_version",
         sql: GRAPH_VERSION,
     },
+    Migration {
+        id: 5,
+        name: "graph_decisions",
+        sql: GRAPH_DECISIONS,
+    },
 ];
 
 /// The highest migration identifier this build carries.
@@ -271,6 +276,37 @@ CREATE TABLE graph_meta (
 INSERT INTO graph_meta (id, version, last_changed_at) VALUES (1, 0, '1970-01-01T00:00:00Z');
 ";
 
+/// Decisions the graph layer made about records, and why.
+///
+/// ADR 0004 §2 requires that every graph decision be a record rather than a side effect: a
+/// deduplication that silently collapses two records leaves nobody able to answer "why is there one
+/// of these?".
+///
+/// Deliberately generic across decision kinds rather than one table per algorithm. Resolution,
+/// contradiction, and decay owe the same four things — inputs, algorithm, version, reason — and
+/// five near-identical tables would drift.
+///
+/// Keyed on `(decision_kind, subject, observation)`, so re-running an algorithm over the same
+/// inputs updates one row instead of appending. A decision log that grows on every re-run is one
+/// nobody reads, and re-running is what happens every time a feed is re-imported.
+const GRAPH_DECISIONS: &str = "\
+CREATE TABLE graph_decisions (
+    id                TEXT    NOT NULL PRIMARY KEY,
+    decision_kind     TEXT    NOT NULL,
+    subject           TEXT    NOT NULL,
+    observation       TEXT    NOT NULL,
+    compared_with     TEXT,
+    verdict           TEXT    NOT NULL,
+    algorithm         TEXT    NOT NULL,
+    algorithm_version INTEGER NOT NULL,
+    reason            TEXT    NOT NULL,
+    decided_at        TEXT    NOT NULL
+) STRICT;
+
+CREATE INDEX graph_decisions_subject ON graph_decisions (decision_kind, subject);
+CREATE INDEX graph_decisions_verdict ON graph_decisions (decision_kind, verdict);
+";
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -373,6 +409,32 @@ mod tests {
             2,
             "both retention tables are STRICT, like every other table",
         );
+    }
+
+    /// Pinned like 0001's and 0002's. A released migration is immutable under ADR 0001 §6.
+    #[test]
+    fn the_graph_migrations_checksums_are_pinned() {
+        let pinned = [
+            (
+                4_u32,
+                "sha256:3f28c6c253a383baa1af68d511494a0103f4df6d428c30518894d90a84b4c3fa",
+            ),
+            (
+                5_u32,
+                "sha256:ed1630ae459ef73dce56ebdf84e12672c64377dff383e89b6be6709f79ec6534",
+            ),
+        ];
+        for (id, expected) in pinned {
+            let migration = MIGRATIONS
+                .iter()
+                .find(|migration| migration.id == id)
+                .expect("migration exists");
+            assert_eq!(
+                migration.checksum().to_string(),
+                expected,
+                "migration {id} changed; append a new migration instead of editing a released one",
+            );
+        }
     }
 
     #[test]
