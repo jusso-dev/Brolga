@@ -167,7 +167,7 @@ impl<Out: Write, Err: Write> Streams<Out, Err> {
         let stamped = stamp(value)?;
         match self.mode {
             OutputMode::Yaml => {
-                let encoded = serde_yaml::to_string(&stamped)
+                let encoded = serde_yaml_ng::to_string(&stamped)
                     .map_err(|error| io::Error::other(error.to_string()))?;
                 write!(self.out, "{encoded}")
             }
