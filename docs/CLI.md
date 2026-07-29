@@ -265,12 +265,18 @@ fi
 
 ## `brolga fetch`
 
-Retrieve intelligence from a remote TAXII 2.0 or 2.1 server. Read-only: Brolga never publishes to
-an upstream platform, and the transport has no method that sends a body.
+Retrieve intelligence from a remote platform. Read-only: Brolga never publishes upstream, and the
+transport has no method that sends a body — so read-only is structural rather than a default
+somebody can flip.
+
+Two protocols, as subcommands, because a TAXII collection identifier and a MISP instance name are
+different things and one flat argument set would accept combinations that mean nothing.
 
 ```bash
-brolga fetch https://taxii.example.org \
+brolga fetch taxii https://taxii.example.org \
     --collection 91a7b528-80eb-42ed-a74d-c6fbd5a26116
+
+BROLGA_MISP_KEY=... brolga fetch misp https://misp.example.org --name reef-misp
 ```
 
 Discovery is attempted at `/taxii2/` and then `/taxii/`, so give the **base URL** rather than
@@ -305,22 +311,45 @@ the whole control decorative.
 A refusal exits `2` (usage) and a server failure exits `6` (I/O), because one is a decision to
 revisit and the other is somebody else's outage. A storage failure exits `4` and a timeout `8`.
 
+### `brolga fetch misp`
+
+Reads **events** — which carry their attributes, tags, and galaxy clusters inline — and **warning
+lists**. Sightings, taxonomies, and object templates are deliberately not fetched: the parser has no
+mapping for them, so fetching them would spend an operator's rate limit to produce records that
+quarantine.
+
+`--name` is the instance's identity and half of every cursor key it owns, defaulting to the URL's
+host. An instance that moves hostname keeps its name and does not resync from the beginning; two
+instances are never merged, because "three sources agree" and "one source polled three times" are
+different facts.
+
+MISP's `restSearch` is normally a `POST` with a JSON body. Brolga uses MISP's equivalent
+path-parameter `GET` form instead, so the transport keeps having no method that sends a body. The
+cost: a filter set large enough to overflow a URL cannot be expressed this way. Brolga's filters are
+a page size, a page number, and a high-water mark, so it does not come close.
+
 ### Credentials
 
-Read from `BROLGA_TAXII_TOKEN`, never from a flag. A credential on a command line is in the shell
+TAXII reads `BROLGA_TAXII_TOKEN`; MISP reads `BROLGA_MISP_KEY`. Never a flag. A credential on a command line is in the shell
 history, in `ps` output, and in any process listing the machine keeps. The `Bearer ` prefix is
 added if it is not already there.
 
 ```bash
-BROLGA_TAXII_TOKEN=abc123 brolga fetch https://taxii.example.org
+BROLGA_TAXII_TOKEN=abc123 brolga fetch taxii https://taxii.example.org
+BROLGA_MISP_KEY=abc123    brolga fetch misp  https://misp.example.org
 ```
 
-No error message, log line, or stored record carries the token.
+No error message, log line, or stored record carries either credential. TAXII takes a `Bearer`
+prefix, added if it is not already there; MISP takes the raw key, which is what it expects.
+
+A MISP key is checked with one cheap `getVersion` call before any sync, so a wrong key fails
+immediately rather than part way through a paginated run that has already written a cursor.
 
 ### Resuming
 
-Each collection has a cursor keyed on `(connector, collection id)` — not on the URL, so a server
-that moves hostname is still the same feed and does not restart from the beginning. A run sends the
+Each feed has a cursor keyed on `(connector, feed)` — `(taxii, <collection id>)` or
+`(misp, <instance>/<feed>)`, and never on the URL, so a server that moves hostname is still the same
+feed and does not restart from the beginning. A run sends the
 stored `added_after` and, unless `--no-etag` is given, the stored `ETag`; a `304` costs a round trip
 instead of a body.
 

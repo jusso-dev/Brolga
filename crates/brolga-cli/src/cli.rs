@@ -251,6 +251,76 @@ pub(crate) struct DatabaseArgs {
 /// `brolga fetch`.
 #[derive(Debug, Args)]
 pub(crate) struct FetchArgs {
+    /// Which protocol to speak.
+    #[command(subcommand)]
+    pub(crate) source: FetchSource,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite", global = true)]
+    pub(crate) database: PathBuf,
+
+    /// Permit connections to private and loopback addresses.
+    ///
+    /// Off by default. This is the SSRF control: an operator with an internal server sets it
+    /// deliberately. It does **not** permit the cloud metadata address, which stays refused
+    /// regardless — enabling internal fetches almost never means "and also let a feed read my
+    /// instance credentials".
+    #[arg(long, global = true)]
+    pub(crate) allow_private: bool,
+
+    /// Permit plaintext HTTP.
+    ///
+    /// Off by default. A request to an intelligence platform carries a credential and describes
+    /// what an organisation is investigating; both are worth protecting in transit.
+    #[arg(long, global = true)]
+    pub(crate) allow_http: bool,
+
+    /// Ignore the stored entity tag and re-fetch regardless.
+    #[arg(long, global = true)]
+    pub(crate) no_etag: bool,
+
+    /// Objects to request per page.
+    #[arg(long, default_value_t = 100, global = true)]
+    pub(crate) page_size: usize,
+
+    /// Stop after this many pages per feed.
+    ///
+    /// A server can always claim more pages remain. A run stopped by this bound reports `partial`
+    /// rather than `complete`, so "stopped early" never reads as "up to date".
+    #[arg(long, default_value_t = 1000, global = true)]
+    pub(crate) max_pages: usize,
+
+    /// Stop after this many seconds.
+    #[arg(long, global = true)]
+    pub(crate) timeout_seconds: Option<u64>,
+}
+
+/// Which upstream a fetch reads.
+///
+/// A subcommand rather than a `--type` flag, because the two protocols do not take the same
+/// arguments: a TAXII collection identifier and a MISP instance name are different things, and a
+/// single flat argument set would accept combinations that mean nothing.
+#[derive(Debug, clap::Subcommand)]
+pub(crate) enum FetchSource {
+    /// Read a TAXII 2.0 or 2.1 server.
+    Taxii(TaxiiArgs),
+    /// Read a MISP instance.
+    Misp(MispArgs),
+}
+
+impl FetchSource {
+    /// The connector's name, for a diagnostic.
+    pub(crate) const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Taxii(_) => "taxii",
+            Self::Misp(_) => "misp",
+        }
+    }
+}
+
+/// `brolga fetch taxii`.
+#[derive(Debug, Args)]
+pub(crate) struct TaxiiArgs {
     /// The TAXII server's base URL.
     ///
     /// Discovery is attempted at `/taxii2/` and then `/taxii/`, so the base is what to give here
@@ -265,50 +335,39 @@ pub(crate) struct FetchArgs {
     #[arg(long = "collection")]
     pub(crate) collections: Vec<String>,
 
-    /// Where the database lives.
-    #[arg(long, default_value = "brolga.sqlite")]
-    pub(crate) database: PathBuf,
-
-    /// Objects to request per page.
-    #[arg(long, default_value_t = 100)]
-    pub(crate) page_size: usize,
-
-    /// Stop after this many pages per collection.
-    ///
-    /// A server can always claim more pages remain. A run stopped by this bound reports `partial`
-    /// rather than `complete`, so "stopped early" never reads as "up to date".
-    #[arg(long, default_value_t = 1000)]
-    pub(crate) max_pages: usize,
-
-    /// Permit connections to private and loopback addresses.
-    ///
-    /// Off by default. This is the SSRF control: an operator with an internal TAXII server sets it
-    /// deliberately. It does **not** permit the cloud metadata address, which stays refused
-    /// regardless — enabling internal fetches almost never means "and also let a feed read my
-    /// instance credentials".
-    #[arg(long)]
-    pub(crate) allow_private: bool,
-
-    /// Permit plaintext HTTP.
-    ///
-    /// Off by default. A TAXII request carries a credential and describes what an organisation is
-    /// investigating; both are worth protecting in transit.
-    #[arg(long)]
-    pub(crate) allow_http: bool,
-
-    /// Ignore the stored entity tag and re-fetch regardless.
-    #[arg(long)]
-    pub(crate) no_etag: bool,
-
     /// List what the server offers and stop, without fetching or storing anything.
     #[arg(long)]
     pub(crate) discover_only: bool,
-
-    /// Stop after this many seconds.
-    #[arg(long)]
-    pub(crate) timeout_seconds: Option<u64>,
 }
 
+/// `brolga fetch misp`.
+#[derive(Debug, Args)]
+pub(crate) struct MispArgs {
+    /// The MISP instance's base URL.
+    pub(crate) url: String,
+
+    /// A name for this instance.
+    ///
+    /// Half of every cursor key it owns, so an instance that moves hostname is still the same
+    /// instance and does not resync from the beginning. Defaults to the URL's host.
+    #[arg(long)]
+    pub(crate) name: Option<String>,
+
+    /// Which feeds to read. Repeatable. Defaults to events and warning lists.
+    #[arg(long = "feed", value_enum)]
+    pub(crate) feeds: Vec<MispFeedArg>,
+}
+
+/// Which MISP feed to read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum MispFeedArg {
+    /// Events, with their attributes, tags, and galaxy clusters inline.
+    Events,
+    /// Warning lists, which flag likely false positives.
+    Warninglists,
+}
+
+/// `brolga serve`.
 /// `brolga serve`.
 #[derive(Debug, Args)]
 pub(crate) struct ServeArgs {
