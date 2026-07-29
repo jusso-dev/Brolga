@@ -31,6 +31,7 @@ use brolga_model::id::{Id, Identifiable};
 use brolga_model::provenance::{ContentHash, SourceObject};
 use brolga_model::relationship::{NodeRef, Relationship};
 use brolga_model::sighting::Sighting;
+use brolga_model::temporal::Timestamp;
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -44,7 +45,8 @@ use crate::error::{Result, StorageError};
 use crate::migration::{MIGRATIONS, MIGRATIONS_TABLE, latest_version};
 use crate::quarantine::{QuarantineEntry, QuarantineRecord, QuarantineStage};
 use crate::store::{
-    IntelligenceStore, MigrationReport, Page, RecordKind, StoreRead, StoreWrite, UpsertOutcome,
+    Direction, EdgeQuery, EntityQuery, IntelligenceStore, MigrationReport, Page, RecordKind,
+    StoreRead, StoreWrite, UpsertOutcome,
 };
 
 /// Default busy timeout, in milliseconds, matching `brolga-config`'s default.
@@ -246,6 +248,20 @@ impl SqliteStore {
         Ok(u64::try_from(value).unwrap_or(0))
     }
 
+    /// Read a single non-negative count from a statement with bound values.
+    fn scalar_with(
+        &self,
+        operation: &'static str,
+        sql: &str,
+        binds: &[&dyn rusqlite::ToSql],
+    ) -> Result<u64> {
+        let value: i64 = self
+            .connection
+            .query_row(sql, binds, |row| row.get(0))
+            .map_err(|error| StorageError::query(operation, error))?;
+        Ok(u64::try_from(value).unwrap_or(0))
+    }
+
     fn fetch<T: DeserializeOwned>(
         &self,
         kind: &'static str,
@@ -371,6 +387,140 @@ WHERE subject_ref = ?1
 ORDER BY last_seen DESC, id ASC
 LIMIT ?2 OFFSET ?3";
 
+// -------------------------------------------------------------------------------------------------
+// Typed filters, compiled to placeholders. No caller value is ever part of the statement text.
+// -------------------------------------------------------------------------------------------------
+
+/// Render `?,?,?` for `count` anonymously bound values.
+///
+/// The only interpolation in this file besides the table name in
+/// [`count`](StoreRead::count), and like that one it cannot carry a caller's value. What varies is
+/// the *number* of placeholders, which comes from how many members of a closed enum a caller
+/// selected — never from anything a caller wrote. Every value still travels as a bound parameter.
+fn placeholders(count: usize) -> String {
+    let mut rendered = String::with_capacity(count.saturating_mul(2));
+    for index in 0..count {
+        if index > 0 {
+            rendered.push(',');
+        }
+        rendered.push('?');
+    }
+    rendered
+}
+
+/// Join clauses into a `WHERE` fragment, or nothing when there are none.
+///
+/// No clauses means unconstrained. It must not mean `WHERE 1 = 0`: a filter that silently matched
+/// nothing when a caller populated none of it would report an empty graph as a confident answer.
+fn where_clause(clauses: &[String]) -> String {
+    if clauses.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", clauses.join(" AND "))
+    }
+}
+
+/// The start of an instant's UTC day, in the text form `last_seen` is stored as.
+///
+/// Day granularity is exact here and finer granularity would not be. Timestamps are stored as
+/// RFC 3339 rendered in UTC with variable subsecond precision, so lexicographic order matches
+/// chronological order everywhere except *within* one second, where `…:00Z` sorts after `…:00.5Z`.
+/// The date prefix is fixed-width, so a comparison against it is exactly a comparison against the
+/// start of that UTC day. See [`EntityQuery::last_seen_from`].
+fn utc_day(at: Timestamp) -> String {
+    let rendered = at.to_rfc3339();
+    rendered.get(..10).unwrap_or(&rendered).to_owned()
+}
+
+/// Compile an entity filter into a `WHERE` fragment and the values to bind to it.
+fn entity_predicate(query: &EntityQuery) -> (String, Vec<String>) {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut values: Vec<String> = Vec::new();
+
+    if !query.kinds.is_empty() {
+        clauses.push(format!("kind IN ({})", placeholders(query.kinds.len())));
+        values.extend(query.kinds.iter().map(|kind| kind.as_str().to_owned()));
+    }
+    if !query.statuses.is_empty() {
+        clauses.push(format!(
+            "status IN ({})",
+            placeholders(query.statuses.len())
+        ));
+        values.extend(
+            query
+                .statuses
+                .iter()
+                .map(|status| status.as_str().to_owned()),
+        );
+    }
+    // A NULL `last_seen` fails both comparisons, so an entity with no recorded observation does not
+    // match a `last_seen` bound. That is the honest answer: "never observed" is not "observed
+    // before your cut-off".
+    if let Some(from) = query.last_seen_from {
+        clauses.push("last_seen >= ?".to_owned());
+        values.push(utc_day(from));
+    }
+    if let Some(before) = query.last_seen_before {
+        clauses.push("last_seen < ?".to_owned());
+        values.push(utc_day(before));
+    }
+
+    (where_clause(&clauses), values)
+}
+
+/// Compile an edge filter into a `WHERE` fragment and the values to bind to it.
+fn edge_predicate(query: &EdgeQuery) -> (String, Vec<String>) {
+    let node = query.node.to_string();
+    let mut clauses: Vec<String> = Vec::new();
+    let mut values: Vec<String> = Vec::new();
+
+    match query.direction {
+        Direction::Outgoing => {
+            clauses.push("source_ref = ?".to_owned());
+            values.push(node);
+        }
+        Direction::Incoming => {
+            clauses.push("target_ref = ?".to_owned());
+            values.push(node);
+        }
+        Direction::Either => {
+            clauses.push("(source_ref = ? OR target_ref = ?)".to_owned());
+            values.push(node.clone());
+            values.push(node);
+        }
+    }
+
+    if !query.kinds.is_empty() {
+        clauses.push(format!("kind IN ({})", placeholders(query.kinds.len())));
+        values.extend(query.kinds.iter().map(|kind| kind.as_str().to_owned()));
+    }
+    if !query.statuses.is_empty() {
+        clauses.push(format!(
+            "status IN ({})",
+            placeholders(query.statuses.len())
+        ));
+        values.extend(
+            query
+                .statuses
+                .iter()
+                .map(|status| status.as_str().to_owned()),
+        );
+    }
+
+    (where_clause(&clauses), values)
+}
+
+/// Borrow compiled filter values as bound parameters.
+///
+/// Written as a coercion rather than a cast: the workspace forbids `as`, and an unsizing coercion
+/// spelled out in a return type is clearer about what it is doing anyway.
+fn bound(values: &[String]) -> Vec<&dyn rusqlite::ToSql> {
+    values
+        .iter()
+        .map(|value| -> &dyn rusqlite::ToSql { value })
+        .collect()
+}
+
 impl StoreRead for SqliteStore {
     fn schema_version(&self) -> Result<u32> {
         let exists: bool = self
@@ -458,6 +608,41 @@ impl StoreRead for SqliteStore {
                 &i64::try_from(page.offset()).unwrap_or(i64::MAX),
             ],
         )
+    }
+
+    fn search_entities(&self, query: &EntityQuery, page: Page) -> Result<Vec<Entity>> {
+        let (predicate, values) = entity_predicate(query);
+        let sql =
+            format!("SELECT document FROM entities {predicate} ORDER BY id ASC LIMIT ? OFFSET ?");
+
+        let limit = i64::from(page.limit());
+        let offset = i64::try_from(page.offset()).unwrap_or(i64::MAX);
+        let mut binds = bound(&values);
+        binds.push(&limit);
+        binds.push(&offset);
+
+        self.fetch_many("entity", &sql, &binds)
+    }
+
+    fn edges_at(&self, query: &EdgeQuery, page: Page) -> Result<Vec<Relationship>> {
+        let (predicate, values) = edge_predicate(query);
+        let sql = format!(
+            "SELECT document FROM relationships {predicate} ORDER BY id ASC LIMIT ? OFFSET ?"
+        );
+
+        let limit = i64::from(page.limit());
+        let offset = i64::try_from(page.offset()).unwrap_or(i64::MAX);
+        let mut binds = bound(&values);
+        binds.push(&limit);
+        binds.push(&offset);
+
+        self.fetch_many("relationship", &sql, &binds)
+    }
+
+    fn degree(&self, query: &EdgeQuery) -> Result<u64> {
+        let (predicate, values) = edge_predicate(query);
+        let sql = format!("SELECT COUNT(*) FROM relationships {predicate}");
+        self.scalar_with("counting the edges at a node", &sql, &bound(&values))
     }
 
     fn claims_about(&self, subject: &NodeRef, page: Page) -> Result<Vec<Claim>> {
@@ -1576,5 +1761,73 @@ mod tests {
             .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
             .unwrap();
         assert_eq!(enabled, 1);
+    }
+
+    #[test]
+    fn a_compiled_filter_contains_placeholders_and_never_a_value() {
+        // The property the whole typed-query surface rests on. What varies in the statement text is
+        // the *number* of placeholders; every value travels bound.
+        let query = EntityQuery::unfiltered()
+            .with_kind(brolga_model::entity::EntityKind::ThreatActor)
+            .with_kind(brolga_model::entity::EntityKind::MalwareFamily)
+            .only_current();
+        let (predicate, values) = entity_predicate(&query);
+
+        assert_eq!(predicate.matches('?').count(), values.len());
+        for value in &values {
+            assert!(
+                !predicate.contains(value.as_str()),
+                "{value} was interpolated into {predicate}",
+            );
+        }
+        assert!(predicate.starts_with("WHERE "));
+    }
+
+    #[test]
+    fn a_filter_that_constrains_nothing_produces_no_where_clause() {
+        // Not `WHERE 1 = 0`. A filter that silently matched nothing would report an empty graph as
+        // a confident answer.
+        let (predicate, values) = entity_predicate(&EntityQuery::unfiltered());
+        assert!(predicate.is_empty());
+        assert!(values.is_empty());
+    }
+
+    #[test]
+    fn a_both_ends_edge_filter_binds_the_node_once_per_placeholder() {
+        // A mismatch here would bind the limit into a node comparison and silently return nothing.
+        let node = NodeRef::Entity(Id::derive(&["entity", "a"]));
+        for direction in [Direction::Outgoing, Direction::Incoming, Direction::Either] {
+            let (predicate, values) = edge_predicate(&EdgeQuery::at(node, direction));
+            assert_eq!(
+                predicate.matches('?').count(),
+                values.len(),
+                "{direction:?} binds the wrong number of values",
+            );
+        }
+    }
+
+    #[test]
+    fn placeholders_are_comma_separated_and_empty_for_nothing() {
+        assert_eq!(placeholders(0), "");
+        assert_eq!(placeholders(1), "?");
+        assert_eq!(placeholders(3), "?,?,?");
+    }
+
+    #[test]
+    fn a_temporal_bound_is_the_start_of_its_utc_day() {
+        // Day granularity is exact; second granularity would not be, because RFC 3339 text with
+        // variable subsecond precision does not sort chronologically within a second.
+        let at = Timestamp::parse_rfc3339("2026-03-05T18:45:12.25Z").unwrap();
+        let bound = utc_day(at);
+        assert_eq!(bound, "2026-03-05");
+        // How SQLite will compare a stored `last_seen` against the bound.
+        assert!(
+            bound.as_str() <= "2026-03-05T00:00:00Z",
+            "the day starts in"
+        );
+        assert!(
+            bound.as_str() > "2026-03-04T23:59:59.999Z",
+            "and yesterday is out"
+        );
     }
 }
