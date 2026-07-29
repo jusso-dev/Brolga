@@ -82,6 +82,7 @@ pub(crate) fn run<Out: Write, Err: Write>(
         Command::ExitCodes => exit_codes(streams),
         Command::Context(args) => crate::context_command::context(args, streams),
         Command::ExplainPlan(args) => crate::plan_command::explain_plan(args, streams),
+        Command::Mapping(sub) => crate::mapping_command::mapping(sub, streams),
         Command::Mcp(args) => mcp(args, streams),
     }
 }

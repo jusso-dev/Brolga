@@ -71,6 +71,7 @@ pub mod canon;
 pub mod detect;
 pub mod error;
 pub mod formats;
+pub mod mapping;
 pub mod parser;
 pub mod pipeline;
 pub mod registry;
@@ -81,6 +82,7 @@ pub mod testing;
 pub use canon::{CanonError, Canonical};
 pub use detect::{Candidate, DetectionConfidence, FormatHint};
 pub use error::{IngestError, ParseError, Result};
+pub use mapping::{MappedParser, Mapping, MappingError};
 pub use parser::{
     IntelligenceParser, ParseContext, ParseOutput, ParsedRecord, ParserId, RejectedRecord,
 };

@@ -1,0 +1,37 @@
+{
+  "generated": "2026-05-01T00:00:00Z",
+  "data": [
+    {
+      "kind": "indicator",
+      "value": " hxxp://evil[.]example[.]com/payload ",
+      "verdict": "Malicious",
+      "confidence": 90,
+      "source_system": "acme-sensor-3",
+      "tags": ["phishing", "credential-theft"],
+      "first_seen": "2026-04-28T11:00:00Z",
+      "internal_ticket": "ACME-4471"
+    },
+    {
+      "kind": "indicator",
+      "value": "198.51.100.23",
+      "verdict": "malicious",
+      "confidence": 65,
+      "tags": ["scanning"]
+    },
+    {
+      "kind": "note",
+      "value": "not an indicator, and the filter drops it",
+      "verdict": "benign"
+    },
+    {
+      "kind": "indicator",
+      "value": "this is not any kind of indicator at all",
+      "verdict": "malicious"
+    },
+    {
+      "kind": "indicator",
+      "value": "203.0.113.9",
+      "verdict": "probably-maybe"
+    }
+  ]
+}

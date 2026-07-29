@@ -1,0 +1,70 @@
+# An in-house JSON indicator export, of the shape nobody else has.
+#
+# `brolga mapping validate examples/mappings/acme-json.yml` checks it.
+# `brolga mapping explain  examples/mappings/acme-json.yml` says what it will do, and what the
+# engine refuses to do whatever this file says.
+#
+# `brolga ingest feed.json --mapping examples/mappings/acme-json.yml`
+
+schema_version: brolga.mapping/1.0
+id: acme-indicator-export
+version: 1
+description: >
+  ACME's internal indicator export. One record per entry under `data`, with defanged values and a
+  vendor-specific verdict column.
+
+source: json
+records: data[*]
+
+# Conjunctive. A record failing any of these is not a record this mapping is about, and is skipped
+# rather than quarantined.
+filters:
+  - path: kind
+    op: equals
+    value: indicator
+  - path: value
+    op: present
+
+fields:
+  # The subject: what every other field in the record is about. Exactly one field may be the subject.
+  - path: value
+    target:
+      type: infer
+    transforms:
+      - op: trim
+      - op: undefang
+    subject: true
+
+  - path: verdict
+    target:
+      type: disposition
+    transforms:
+      - op: lowercase
+
+  - path: confidence
+    target:
+      type: attribute
+      name: acme.confidence
+
+  - path: source_system
+    target:
+      type: attribute
+      name: acme.source_system
+    default: unspecified
+
+  # A multi-valued column: the wildcard makes this many values, each becoming its own claim.
+  - path: tags[*]
+    target:
+      type: attribute
+      name: acme.tag
+
+  - path: first_seen
+    target:
+      type: attribute
+      name: acme.first_seen
+
+  # Considered and deliberately not imported. Documenting the decision in the mapping is the
+  # difference between covering a feed and merely running against it.
+  - path: internal_ticket
+    target:
+      type: ignore

@@ -1,0 +1,32 @@
+# A device management console's XML dump. Any `<!DOCTYPE>` in the document is refused before parsing,
+# whatever this mapping says.
+
+schema_version: brolga.mapping/1.0
+id: device-console-xml
+version: 1
+description: Blocked-destination report from a device management console.
+
+source: xml
+records: blocked[*]
+
+fields:
+  - path: destination
+    target:
+      type: observable
+      kind: domain-name
+    transforms:
+      - op: trim
+      - op: lowercase
+    subject: true
+    required: true
+
+  # An attribute of the record element rather than a child element.
+  - path: "@reason"
+    target:
+      type: attribute
+      name: device.block_reason
+
+  - path: policy
+    target:
+      type: attribute
+      name: device.policy
