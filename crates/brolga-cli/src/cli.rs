@@ -143,15 +143,91 @@ pub(crate) enum Command {
     /// A pipeline author can read them from the binary they are actually running.
     ExitCodes,
 
-    /// Import intelligence from a file or feed.
-    ///
-    /// Declared but not implemented in this build. Exits `5`.
-    Ingest(NotImplementedArgs),
+    /// Import intelligence from one or more files.
+    Ingest(IngestArgs),
+
+    /// Show what is in the store.
+    Stats,
+
+    /// Show one record by identifier.
+    Show(ShowArgs),
+
+    /// List records that could not be accepted, and why.
+    Quarantine(QuarantineArgs),
+
+    /// List retained original source objects.
+    Sources,
 
     /// Produce a context pack for a subject.
     ///
     /// Declared but not implemented in this build. Exits `5`.
     Context(NotImplementedArgs),
+}
+
+/// `brolga ingest`.
+#[derive(Debug, Args)]
+pub(crate) struct IngestArgs {
+    /// Files to read. Format is detected per file.
+    #[arg(required = true)]
+    pub(crate) paths: Vec<PathBuf>,
+
+    /// How to treat records that cannot be accepted.
+    ///
+    /// Strict by default: a feed that has started producing records Brolga cannot read should not
+    /// be half-imported, because a partial dataset is easily mistaken for a complete one.
+    #[arg(long, value_enum, default_value_t = Mode::Strict)]
+    pub(crate) mode: Mode,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+
+    /// Parse and report without writing anything.
+    #[arg(long)]
+    pub(crate) dry_run: bool,
+
+    /// Do not retain the original source bytes.
+    ///
+    /// Named so the loss is obvious at the call site. Retained evidence is what makes a
+    /// disagreement with an upstream platform settleable.
+    #[arg(long)]
+    pub(crate) no_retain: bool,
+
+    /// Stop after this many seconds.
+    #[arg(long)]
+    pub(crate) timeout_seconds: Option<u64>,
+}
+
+/// How ingestion treats a record it cannot accept.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub(crate) enum Mode {
+    /// Any rejection fails the whole batch and nothing is written.
+    Strict,
+    /// Acceptable records are written; the rest are quarantined.
+    Permissive,
+}
+
+/// `brolga show`.
+#[derive(Debug, Args)]
+pub(crate) struct ShowArgs {
+    /// The record identifier, as printed by `brolga stats` or `brolga quarantine`.
+    pub(crate) id: String,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+}
+
+/// `brolga quarantine`.
+#[derive(Debug, Args)]
+pub(crate) struct QuarantineArgs {
+    /// Show only rejections from this source object digest.
+    #[arg(long)]
+    pub(crate) source: Option<String>,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
 }
 
 /// `brolga init`.
@@ -219,6 +295,10 @@ impl Command {
             Self::Config(_) => "config",
             Self::ExitCodes => "exit-codes",
             Self::Ingest(_) => "ingest",
+            Self::Stats => "stats",
+            Self::Show(_) => "show",
+            Self::Quarantine(_) => "quarantine",
+            Self::Sources => "sources",
             Self::Context(_) => "context",
         }
     }
@@ -322,13 +402,38 @@ mod tests {
         }
     }
 
+    /// So the failure is about the version rather than about the arguments. `ingest` used to be
+    /// the example here and is now implemented, which is the point of the test moving rather than
+    /// being deleted: `context` is the remaining promise.
     #[test]
     fn an_unimplemented_command_accepts_arguments_it_will_not_act_on() {
-        // So the failure is about the version rather than about the arguments.
         let parsed =
-            Cli::try_parse_from(["brolga", "ingest", "--format", "stix", "bundle.json"]).unwrap();
+            Cli::try_parse_from(["brolga", "context", "--subject", "evil.example"]).unwrap();
         match parsed.command {
-            Command::Ingest(args) => assert!(!args.arguments.is_empty()),
+            Command::Context(args) => assert!(!args.arguments.is_empty()),
+            other => panic!("expected context, got {other:?}"),
+        }
+    }
+
+    /// `ingest` now takes real arguments, so a file path parses as a path rather than as an opaque
+    /// pass-through.
+    #[test]
+    fn ingest_parses_real_arguments() {
+        let parsed = Cli::try_parse_from([
+            "brolga",
+            "ingest",
+            "bundle.json",
+            "--mode",
+            "permissive",
+            "--dry-run",
+        ])
+        .unwrap();
+        match parsed.command {
+            Command::Ingest(args) => {
+                assert_eq!(args.paths.len(), 1);
+                assert!(args.dry_run);
+                assert_eq!(args.mode, Mode::Permissive);
+            }
             other => panic!("expected ingest, got {other:?}"),
         }
     }
@@ -357,13 +462,17 @@ mod tests {
             vec!["brolga", "doctor"],
             vec!["brolga", "config", "validate"],
             vec!["brolga", "exit-codes"],
-            vec!["brolga", "ingest"],
+            vec!["brolga", "ingest", "bundle.json"],
+            vec!["brolga", "stats"],
+            vec!["brolga", "show", "entity:x"],
+            vec!["brolga", "sources"],
+            vec!["brolga", "quarantine"],
             vec!["brolga", "context"],
         ]
         .into_iter()
         .map(|argv| Cli::try_parse_from(argv).unwrap().command.name())
         .collect();
-        assert_eq!(names.len(), 6);
+        assert_eq!(names.len(), 10, "every command has a distinct stable name");
     }
 
     #[test]
