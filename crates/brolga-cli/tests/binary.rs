@@ -155,7 +155,7 @@ fn a_successful_command_exits_zero() {
 fn a_usage_error_exits_two() {
     // The long-standing convention, and what scripts special-case.
     assert_eq!(code(&brolga(&["teleport"])), 2);
-    assert_eq!(code(&brolga(&["--output", "yaml", "doctor"])), 2);
+    assert_eq!(code(&brolga(&["--output", "hieroglyphs", "doctor"])), 2);
     assert_eq!(code(&brolga(&["--not-a-flag"])), 2);
 }
 
@@ -973,4 +973,130 @@ fn taking_a_truncated_baseline_warns_on_stderr() {
         "but it says so: {}",
         stderr(&shallow)
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// Output modes — #34's "documented output modes" and "versioned machine schemas"
+// ---------------------------------------------------------------------------------------------
+
+/// Every machine-readable mode carries a schema version. A consumer that has to guess whether a
+/// field moved has no way to fail safely, and "no version" is indistinguishable from "version 1"
+/// until the day it is not.
+#[test]
+fn every_machine_readable_mode_stamps_a_schema_version() {
+    let workspace = workspace();
+    let path = workspace.path();
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+
+    let json = brolga_in(path, &["--output", "json", "search"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
+    assert_eq!(parsed["schema"].as_str(), Some("brolga.cli.output/1.0"));
+
+    let yaml = brolga_in(path, &["--output", "yaml", "search"]);
+    assert!(
+        stdout(&yaml).contains("schema: brolga.cli.output/1.0"),
+        "{}",
+        stdout(&yaml)
+    );
+
+    let jsonl = brolga_in(path, &["--output", "jsonl", "search"]);
+    for line in stdout(&jsonl)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+    {
+        let record: serde_json::Value = serde_json::from_str(line).expect("every line is JSON");
+        assert_eq!(
+            record["schema"].as_str(),
+            Some("brolga.cli.output/1.0"),
+            "each line is self-describing without its neighbours: {line}"
+        );
+    }
+}
+
+/// JSONL streams the members of a collection, not one object containing an array. A stream a
+/// consumer cannot act on until the last element arrives is not a stream.
+#[test]
+fn jsonl_streams_the_records_rather_than_one_object_containing_them() {
+    let workspace = workspace();
+    let path = workspace.path();
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+
+    let jsonl = brolga_in(path, &["--output", "jsonl", "search"]);
+    let rendered = stdout(&jsonl);
+    let lines: Vec<&str> = rendered
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect();
+
+    assert!(lines.len() > 1, "several records, several lines");
+    for line in &lines {
+        let record: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert!(record["id"].is_string(), "a record, not a wrapper: {line}");
+    }
+}
+
+/// The envelope must not overwrite a record's own field. `kind` is a real field on an entity —
+/// `intrusion_set` — and an envelope that clobbered it would corrupt the value a consumer filters
+/// on, silently.
+#[test]
+fn the_jsonl_envelope_never_overwrites_a_field_the_record_already_has() {
+    let workspace = workspace();
+    let path = workspace.path();
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+
+    let jsonl = brolga_in(
+        path,
+        &["--output", "jsonl", "search", "--kind", "intrusion_set"],
+    );
+    let line = stdout(&jsonl)
+        .lines()
+        .find(|line| !line.trim().is_empty())
+        .expect("one intrusion set")
+        .to_owned();
+    let record: serde_json::Value = serde_json::from_str(&line).unwrap();
+
+    assert_eq!(
+        record["kind"].as_str(),
+        Some("intrusion_set"),
+        "the record's own kind survived: {line}"
+    );
+    assert_eq!(record["_collection"].as_str(), Some("entities"));
+}
+
+/// A table is for eyes. It must line up, and it must not truncate a value to make it line up —
+/// a silently shortened identifier is worse than a wide table.
+#[test]
+fn table_output_aligns_without_truncating_anything() {
+    let workspace = workspace();
+    let path = workspace.path();
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+
+    let table = brolga_in(path, &["--output", "table", "search"]);
+    assert_eq!(code(&table), 0);
+    let rendered = stdout(&table);
+
+    let lines: Vec<&str> = rendered.lines().collect();
+    assert!(lines.len() > 2, "a heading, a rule, and rows");
+    assert!(lines[0].contains("ID") && lines[0].contains("NAME"));
+    assert!(lines[1].starts_with("---"), "a rule under the heading");
+
+    // Every full identifier is present, not an abbreviation of one.
+    let json = brolga_in(path, &["--output", "json", "search"]);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
+    for entity in parsed["entities"].as_array().unwrap() {
+        let id = entity["id"].as_str().unwrap();
+        assert!(rendered.contains(id), "{id} was truncated out of the table");
+    }
+}
+
+/// Human output carries no schema and promises nothing — it may reflow whenever it reads better.
+/// Conflating the two is how a script ends up parsing prose.
+#[test]
+fn human_output_carries_no_schema_version() {
+    let workspace = workspace();
+    let path = workspace.path();
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+
+    let human = brolga_in(path, &["search"]);
+    assert!(!stdout(&human).contains("brolga.cli.output"));
 }

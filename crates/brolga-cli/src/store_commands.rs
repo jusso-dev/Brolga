@@ -148,7 +148,7 @@ pub(crate) fn stats<Out: Write, Err: Write>(
     let occurrences = store.quarantine_occurrences().unwrap_or(0);
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let mut object = serde_json::Map::new();
             for (label, count) in &counts {
                 object.insert((*label).to_owned(), serde_json::json!(count));
@@ -170,7 +170,7 @@ pub(crate) fn stats<Out: Write, Err: Write>(
             let _ = streams.result_json(&serde_json::Value::Object(object));
             ExitCode::Success
         }
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             for (label, count) in &counts {
                 let _ = streams.result_line(&format!("{label:<16} {count}"));
             }
@@ -272,7 +272,7 @@ pub(crate) fn quarantine<Out: Write, Err: Write>(
     };
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let entries: Vec<serde_json::Value> = records
                 .iter()
                 .map(|record| {
@@ -294,7 +294,7 @@ pub(crate) fn quarantine<Out: Write, Err: Write>(
             let _ = streams.result_json(&serde_json::json!({ "quarantined": entries }));
             ExitCode::Success
         }
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             if records.is_empty() {
                 let _ = streams.result_line("nothing quarantined from that source");
                 return ExitCode::Success;
@@ -329,7 +329,7 @@ pub(crate) fn sources<Out: Write, Err: Write>(
     };
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let entries: Vec<serde_json::Value> = objects
                 .iter()
                 .map(|object| {
@@ -346,7 +346,7 @@ pub(crate) fn sources<Out: Write, Err: Write>(
             let _ = streams.result_json(&serde_json::json!({ "sources": entries }));
             ExitCode::Success
         }
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             if objects.is_empty() {
                 let _ = streams.result_line("no source objects retained");
                 return ExitCode::Success;
@@ -416,7 +416,7 @@ fn report_dry_run<Out: Write, Err: Write>(
     let rejected: usize = reports.iter().map(|report| report.rejected.len()).sum();
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let documents: Vec<serde_json::Value> = reports
                 .iter()
                 .map(|report| {
@@ -437,7 +437,7 @@ fn report_dry_run<Out: Write, Err: Write>(
             }));
             ExitCode::Success
         }
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             for report in reports {
                 let _ = streams.note(&report.selection);
                 for rejection in &report.rejected {
@@ -461,7 +461,7 @@ fn report_ingest<Out: Write, Err: Write>(
     streams: &mut Streams<Out, Err>,
 ) -> ExitCode {
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let _ = streams.result_json(&serde_json::json!({
                 "mode": report.mode.as_str(),
                 "offered": report.total,
@@ -477,7 +477,7 @@ fn report_ingest<Out: Write, Err: Write>(
             }));
             ExitCode::Success
         }
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             // Which parser read which file is commentary, so it goes to stderr and `--quiet`
             // silences it. The summary is the result.
             for document in &report.documents {

@@ -41,6 +41,19 @@ pub(crate) enum OutputMode {
     Human,
     /// One JSON document, for a machine.
     Json,
+    /// One YAML document, for a machine or a human who has to read it.
+    Yaml,
+    /// One JSON object per line, for a stream a consumer reads incrementally.
+    ///
+    /// The point is not compactness. A consumer can act on the first record before the last one
+    /// exists, which matters when the result set is larger than the reader's patience or memory.
+    Jsonl,
+    /// Aligned columns, for a terminal.
+    ///
+    /// Not the default even though it is prettier: a table's column widths depend on its contents,
+    /// so a script that parses one breaks the day a value gets longer. `--output table` is a choice
+    /// somebody makes for their eyes, and `human` stays the default for everything else.
+    Table,
 }
 
 impl OutputMode {
@@ -50,6 +63,9 @@ impl OutputMode {
         match self {
             Self::Human => "human",
             Self::Json => "json",
+            Self::Yaml => "yaml",
+            Self::Jsonl => "jsonl",
+            Self::Table => "table",
         }
     }
 }
@@ -148,9 +164,78 @@ impl<Out: Write, Err: Write> Streams<Out, Err> {
     ///
     /// Returns an [`io::Error`] if the value cannot be encoded or the stream cannot be written.
     pub(crate) fn result_json<T: Serialize>(&mut self, value: &T) -> io::Result<()> {
-        let encoded = serde_json::to_string_pretty(value)
-            .map_err(|error| io::Error::other(error.to_string()))?;
-        writeln!(self.out, "{encoded}")
+        let stamped = stamp(value)?;
+        match self.mode {
+            OutputMode::Yaml => {
+                let encoded = serde_yaml_ng::to_string(&stamped)
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+                write!(self.out, "{encoded}")
+            }
+            OutputMode::Jsonl => {
+                // One object per line. Where the payload has a single obvious collection, its
+                // members are the lines — a stream of one object containing an array is not a
+                // stream, and a consumer could not act on the first element before the last
+                // arrived.
+                for line in jsonl_lines(&stamped) {
+                    let encoded = serde_json::to_string(&line)
+                        .map_err(|error| io::Error::other(error.to_string()))?;
+                    writeln!(self.out, "{encoded}")?;
+                }
+                Ok(())
+            }
+            _ => {
+                let encoded = serde_json::to_string_pretty(&stamped)
+                    .map_err(|error| io::Error::other(error.to_string()))?;
+                writeln!(self.out, "{encoded}")
+            }
+        }
+    }
+
+    /// Write a table to stdout: a header row and one row per record.
+    ///
+    /// Column widths are computed from the rows actually present, so nothing is truncated. A caller
+    /// gives the headings and the cells; this decides nothing about content.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`io::Error`] if the stream cannot be written.
+    pub(crate) fn result_table(
+        &mut self,
+        headings: &[&str],
+        rows: &[Vec<String>],
+    ) -> io::Result<()> {
+        let mut widths: Vec<usize> = headings.iter().map(|heading| heading.len()).collect();
+        for row in rows {
+            for (index, cell) in row.iter().enumerate() {
+                if let Some(width) = widths.get_mut(index) {
+                    *width = (*width).max(cell.chars().count());
+                }
+            }
+        }
+
+        let render = |cells: &[String], widths: &[usize]| -> String {
+            cells
+                .iter()
+                .enumerate()
+                .map(|(index, cell)| {
+                    let width = widths.get(index).copied().unwrap_or(0);
+                    let padding = width.saturating_sub(cell.chars().count());
+                    format!("{cell}{}", " ".repeat(padding))
+                })
+                .collect::<Vec<_>>()
+                .join("  ")
+                .trim_end()
+                .to_owned()
+        };
+
+        let heading_cells: Vec<String> = headings.iter().map(|h| (*h).to_owned()).collect();
+        writeln!(self.out, "{}", render(&heading_cells, &widths))?;
+        let rule: Vec<String> = widths.iter().map(|width| "-".repeat(*width)).collect();
+        writeln!(self.out, "{}", render(&rule, &widths))?;
+        for row in rows {
+            writeln!(self.out, "{}", render(row, &widths))?;
+        }
+        Ok(())
     }
 
     /// Write a diagnostic to stderr.
@@ -206,6 +291,72 @@ pub(crate) fn should_use_colour(explicit_no_colour: bool) -> bool {
         return false;
     }
     io::stdout().is_terminal()
+}
+
+/// The version every machine-readable payload carries.
+///
+/// A compatibility surface under ADR 0001 §6, and the reason it exists at all: a consumer that has
+/// to guess whether a field moved has no way to fail safely. Adding a field is a compatible change
+/// and does not move this; removing or renaming one, or changing a type, does.
+pub(crate) const OUTPUT_SCHEMA: &str = "brolga.cli.output/1.0";
+
+/// Add the schema version to a payload without the caller having to remember.
+///
+/// Every command builds a JSON object, so the version is added here rather than at each call site —
+/// a version that each command has to opt into is a version some command will not carry, and a
+/// consumer cannot tell "this build does not stamp" from "this payload is unversioned".
+fn stamp<T: Serialize>(value: &T) -> io::Result<serde_json::Value> {
+    let mut encoded =
+        serde_json::to_value(value).map_err(|error| io::Error::other(error.to_string()))?;
+    if let Some(object) = encoded.as_object_mut() {
+        object.insert(
+            "schema".to_owned(),
+            serde_json::Value::String(OUTPUT_SCHEMA.to_owned()),
+        );
+    }
+    Ok(encoded)
+}
+
+/// The lines a payload becomes in `jsonl` mode.
+///
+/// A payload whose only collection is one array streams as that array's members, each carrying the
+/// schema version so a line is self-describing without its neighbours. Anything else streams as a
+/// single line, because inventing a decomposition would make the shape depend on the command.
+fn jsonl_lines(payload: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(object) = payload.as_object() else {
+        return vec![payload.clone()];
+    };
+
+    let arrays: Vec<(&String, &Vec<serde_json::Value>)> = object
+        .iter()
+        .filter_map(|(name, value)| value.as_array().map(|array| (name, array)))
+        .collect();
+
+    let [(name, members)] = arrays.as_slice() else {
+        return vec![payload.clone()];
+    };
+
+    members
+        .iter()
+        .map(|member| {
+            let mut line = member.clone();
+            if let Some(entry) = line.as_object_mut() {
+                entry.insert(
+                    "schema".to_owned(),
+                    serde_json::Value::String(OUTPUT_SCHEMA.to_owned()),
+                );
+                // `_collection`, not `kind`. A record may already have a `kind` of its own —
+                // `intrusion_set` — and an envelope field that silently overwrote it would corrupt
+                // the very value a consumer is filtering on. The underscore says the field is the
+                // envelope's rather than the record's.
+                entry.insert(
+                    "_collection".to_owned(),
+                    serde_json::Value::String((*name).clone()),
+                );
+            }
+            line
+        })
+        .collect()
 }
 
 #[cfg(test)]
