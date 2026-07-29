@@ -8,4 +8,5 @@
 //! cancellation, storage, and quarantine are the pipeline's, so a new format gets all five by
 //! construction and cannot weaken any of them by leaving something out.
 
+pub mod misp;
 pub mod stix;
