@@ -55,10 +55,15 @@ pub(crate) fn run<Out: Write, Err: Write>(
 ) -> ExitCode {
     match command {
         Command::Init(args) => init(args, streams),
+        Command::Ingest(args) => crate::store_commands::ingest(args, streams),
+        Command::Stats(args) => crate::store_commands::stats(&args.database, streams),
+        Command::Show(args) => crate::store_commands::show(args, streams),
+        Command::Quarantine(args) => crate::store_commands::quarantine(args, streams),
+        Command::Sources(args) => crate::store_commands::sources(&args.database, streams),
         Command::Doctor => doctor(global, correlation, streams),
         Command::Config(sub) => config(sub, global, streams),
         Command::ExitCodes => exit_codes(streams),
-        Command::Ingest(_) | Command::Context(_) => not_implemented(command, streams),
+        Command::Context(_) => not_implemented(command, streams),
     }
 }
 
@@ -455,13 +460,15 @@ mod tests {
         Cli::try_parse_from(argv).expect("valid command line")
     }
 
+    /// The failure mode CONTRIBUTING.md prohibits: printing "done" and doing nothing.
+    ///
+    /// `ingest` was in this list and no longer is, because it is implemented. That is the whole
+    /// point of the list shrinking rather than the test being deleted — it is the record of which
+    /// promises are still outstanding.
     #[test]
     fn an_unimplemented_command_fails_rather_than_pretending_to_work() {
-        // The failure mode CONTRIBUTING.md prohibits: printing "done" and doing nothing.
-        for argv in [
-            vec!["brolga", "ingest", "bundle.json"],
-            vec!["brolga", "context", "example.com"],
-        ] {
+        {
+            let argv = vec!["brolga", "context", "example.com"];
             let parsed = parse(&argv);
             let mut streams = streams(OutputMode::Human);
             let code = run(
@@ -485,7 +492,7 @@ mod tests {
 
     #[test]
     fn an_unimplemented_command_says_so_in_structured_output_too() {
-        let parsed = parse(&["brolga", "--output", "json", "ingest"]);
+        let parsed = parse(&["brolga", "--output", "json", "context"]);
         let mut streams = streams(OutputMode::Json);
         let code = run(
             &parsed.command,
