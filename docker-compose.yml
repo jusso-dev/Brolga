@@ -1,0 +1,65 @@
+# Brolga in a homelab.
+#
+# Brolga is a command-line tool, not a service. Every command opens the database, does one thing,
+# writes its result to stdout, and exits. That single fact shapes this file more than anything
+# else in it, and it is why the usual service-shaped defaults are wrong here.
+#
+# The normal way to use this file is `docker compose run --rm brolga <command>`. See
+# docs/DEPLOYMENT.md.
+
+name: brolga
+
+services:
+  brolga:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: brolga:local
+
+    # `no`, not `unless-stopped`. A restart policy exists to bring a crashed daemon back; applied
+    # to a command that is *supposed* to exit, it reads a successful run as a fault and restarts
+    # it for ever. An operator who wants Brolga to run on a schedule should use the host's
+    # scheduler — there is nothing inside Brolga that polls or fetches on a timer.
+    restart: "no"
+
+    # What a bare `docker compose up` should do: report whether this installation can do its job,
+    # then stop. Exits 0 when every check passes and 3 otherwise.
+    command: ["doctor"]
+
+    volumes:
+      # The database and any configuration file. A named volume rather than a bind mount: SQLite
+      # wants POSIX locking to behave, and a bind mount into a Docker VM on macOS or Windows is
+      # the classic way to find out that it does not.
+      - brolga-data:/data
+      # Where the operator drops feeds, exports, and bundles to be ingested. Read-only, because
+      # Brolga only ever reads them — mounting it writable would let a bug in an import path
+      # damage the operator's own copy of the evidence.
+      - ./feeds:/feeds:ro
+
+    # Brolga makes no outbound connections. Nothing in the current release fetches, polls, or
+    # reports anywhere, and the container is given no network so that this is enforced rather
+    # than merely documented. Connectors arrive in v0.6.0; remove this line then, and not before.
+    network_mode: "none"
+
+    # Everything writable is either the volume or a tmpfs, so the image layers can be read-only.
+    read_only: true
+    tmpfs:
+      # SQLite falls back to temporary files for large sorts and for some statement journals.
+      - /tmp
+
+    # The binary needs no privileged capability at all: it opens files and writes a database.
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+
+    # A parser handling untrusted input is exactly where a resource bound belongs. These are
+    # deliberately generous for a homelab and are the ceiling, not the expectation; Brolga
+    # applies its own limits from configuration well below them.
+    mem_limit: 2g
+    pids_limit: 256
+
+volumes:
+  # Referred to elsewhere as `brolga_brolga-data`: Compose prefixes the project name from the
+  # `name:` key above.
+  brolga-data:

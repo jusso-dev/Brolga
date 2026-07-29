@@ -85,6 +85,26 @@ import is never mistaken for a complete one. `--dry-run` parses and reports with
 
 `brolga config explain` shows every resolved setting and which layer supplied it. `brolga exit-codes` prints the exit-code registry from the build you are running. See [docs/CLI.md](docs/CLI.md).
 
+## Run it
+
+There is a container image and a Compose file for running Brolga on your own infrastructure, with
+the database on a volume you control and a directory you drop feeds into.
+
+```bash
+mkdir -p feeds
+docker compose build
+docker compose run --rm brolga doctor
+```
+
+Brolga is a command that runs and exits, not a service, so `docker compose run` is the normal way
+to use it and there is no port to expose. The image runs as a non-root user, is given no network
+because nothing in this release makes an outbound connection, and pins both its base images by
+digest.
+
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) is the operator's guide: build, first run, ingesting a
+file, where the SQLite database lives, how to back it up without the WAL catching you out, and an
+explicit list of what is not reachable yet.
+
 ## Intent
 
 Threat intelligence is abundant but expensive to use. A single investigation may encounter thousands of repeated indicators, copied reports, conflicting claims, stale infrastructure records, inconsistent names, large relationship graphs, and metadata that consumes more attention than it returns.
