@@ -74,7 +74,20 @@ unused-allowed-license = "allow"
 
 # Per-crate exceptions, for a crate whose licence is acceptable only in a specific context.
 # Same review requirements as an advisory ignore.
-exceptions = []
+exceptions = [
+    # The Mozilla root certificate store, pulled in by `rustls` for the outbound TLS that
+    # `brolga-connectors` needs (ADR 0005).
+    #
+    # CDLA-Permissive-2.0 is a *data* licence, and what it licences here is a list of certificate
+    # authorities rather than any code Brolga compiles or links as a library. It carries no
+    # copyleft, no share-alike obligation, and no attribution requirement that would follow into a
+    # binary, so it does not constrain redistributing Brolga under MIT.
+    #
+    # Scoped to this crate rather than added to `allow`, deliberately: a blanket entry would admit
+    # any future dependency under the same licence without anybody looking, and the reasoning above
+    # is specific to a certificate bundle. A code dependency under CDLA would need its own review.
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots" },
+]
 
 [licenses.private]
 # Brolga's own crates carry `license = "MIT"` from the workspace, so they are checked like any

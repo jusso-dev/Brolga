@@ -41,6 +41,7 @@ use crate::blob::{
     RetentionEvent, RetrievedBlob, decode_bytes, encode_bytes,
 };
 use crate::checkpoint::CheckpointSummary;
+use crate::cursor::{ConnectorCursor, CursorStatus};
 use crate::decision::GraphDecisionRow;
 use crate::error::{Result, StorageError};
 use crate::migration::{MIGRATIONS, MIGRATIONS_TABLE, latest_version};
@@ -873,6 +874,53 @@ impl StoreRead for SqliteStore {
         Ok(records)
     }
 
+    fn connector_cursor(&self, connector: &str, feed: &str) -> Result<Option<ConnectorCursor>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT connector, feed, added_after, etag, next_token, last_run_at, last_status,
+                        records_seen
+                 FROM connector_cursors WHERE connector = ?1 AND feed = ?2",
+            )
+            .map_err(|error| StorageError::query("preparing a connector cursor query", error))?;
+
+        let mut rows = statement
+            .query(params![connector, feed])
+            .map_err(|error| StorageError::query("reading a connector cursor", error))?;
+
+        let Some(row) = rows
+            .next()
+            .map_err(|error| StorageError::query("reading a connector cursor", error))?
+        else {
+            return Ok(None);
+        };
+        cursor_from_row(row).map(Some)
+    }
+
+    fn connector_cursors(&self) -> Result<Vec<ConnectorCursor>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT connector, feed, added_after, etag, next_token, last_run_at, last_status,
+                        records_seen
+                 FROM connector_cursors ORDER BY connector ASC, feed ASC",
+            )
+            .map_err(|error| StorageError::query("preparing a connector cursor query", error))?;
+
+        let mut rows = statement
+            .query([])
+            .map_err(|error| StorageError::query("reading connector cursors", error))?;
+
+        let mut cursors = Vec::new();
+        while let Some(row) = rows
+            .next()
+            .map_err(|error| StorageError::query("reading connector cursors", error))?
+        {
+            cursors.push(cursor_from_row(row)?);
+        }
+        Ok(cursors)
+    }
+
     fn quarantine_count(&self) -> Result<u64> {
         self.scalar("SELECT COUNT(*) FROM quarantine")
     }
@@ -1437,6 +1485,41 @@ impl StoreWrite for SqliteWriter<'_> {
         })
     }
 
+    fn put_connector_cursor(&mut self, cursor: &ConnectorCursor) -> Result<()> {
+        // Upsert on the feed key. A connector run replaces its own position rather than appending,
+        // because the history that matters is the records, not the cursor's own past values.
+        //
+        // Written through the transaction rather than the connection, which is the whole point:
+        // the cursor commits with the records the page produced, so a crash between them is
+        // impossible. See ADR 0005 §4.
+        self.transaction
+            .execute(
+                "INSERT INTO connector_cursors
+                     (connector, feed, added_after, etag, next_token, last_run_at, last_status,
+                      records_seen)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT (connector, feed) DO UPDATE SET
+                     added_after  = excluded.added_after,
+                     etag         = excluded.etag,
+                     next_token   = excluded.next_token,
+                     last_run_at  = excluded.last_run_at,
+                     last_status  = excluded.last_status,
+                     records_seen = excluded.records_seen",
+                params![
+                    cursor.connector,
+                    cursor.feed,
+                    cursor.added_after,
+                    cursor.etag,
+                    cursor.next_token,
+                    cursor.last_run_at,
+                    cursor.last_status.as_str(),
+                    i64::try_from(cursor.records_seen).unwrap_or(i64::MAX),
+                ],
+            )
+            .map_err(|error| StorageError::query("writing a connector cursor", error))?;
+        Ok(())
+    }
+
     fn put_source_blob(&mut self, request: &BlobRequest<'_>) -> Result<BlobOutcome> {
         let address = request.content_hash().to_string();
         let length = request.length();
@@ -1792,6 +1875,44 @@ fn now_rfc3339() -> String {
     time::OffsetDateTime::now_utc()
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap_or_else(|_| "unknown".to_owned())
+}
+
+/// Read one cursor row.
+///
+/// A status this build does not know becomes `Failed` rather than an error. A database written by a
+/// newer build is not corrupt, and refusing to read it would take the whole store down over a field
+/// that is advisory — but treating an unknown state as success would report a feed as current when
+/// nothing here can tell whether it is.
+fn cursor_from_row(row: &rusqlite::Row<'_>) -> Result<ConnectorCursor> {
+    let status: String = row
+        .get(6)
+        .map_err(|error| StorageError::query("reading a cursor status", error))?;
+    let records_seen: i64 = row
+        .get(7)
+        .map_err(|error| StorageError::query("reading a cursor record count", error))?;
+
+    Ok(ConnectorCursor {
+        connector: row
+            .get(0)
+            .map_err(|error| StorageError::query("reading a cursor connector", error))?,
+        feed: row
+            .get(1)
+            .map_err(|error| StorageError::query("reading a cursor feed", error))?,
+        added_after: row
+            .get(2)
+            .map_err(|error| StorageError::query("reading a cursor added_after", error))?,
+        etag: row
+            .get(3)
+            .map_err(|error| StorageError::query("reading a cursor etag", error))?,
+        next_token: row
+            .get(4)
+            .map_err(|error| StorageError::query("reading a cursor token", error))?,
+        last_run_at: row
+            .get(5)
+            .map_err(|error| StorageError::query("reading a cursor timestamp", error))?,
+        last_status: CursorStatus::parse(&status).unwrap_or(CursorStatus::Failed),
+        records_seen: u64::try_from(records_seen).unwrap_or(0),
+    })
 }
 
 #[cfg(test)]

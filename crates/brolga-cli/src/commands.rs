@@ -58,6 +58,7 @@ pub(crate) fn run<Out: Write, Err: Write>(
     match command {
         Command::Init(args) => init(args, streams),
         Command::Ingest(args) => crate::store_commands::ingest(args, streams),
+        Command::Fetch(args) => crate::fetch_command::fetch(args, streams),
         Command::Stats(args) => crate::store_commands::stats(&args.database, streams),
         Command::Show(args) => crate::store_commands::show(args, streams),
         Command::Quarantine(args) => crate::store_commands::quarantine(args, streams),

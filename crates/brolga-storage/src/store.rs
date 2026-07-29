@@ -41,6 +41,7 @@ use crate::blob::{
     BlobMetadata, BlobOutcome, BlobRequest, RetentionClass, RetentionEvent, RetrievedBlob,
 };
 use crate::checkpoint::CheckpointSummary;
+use crate::cursor::ConnectorCursor;
 use crate::decision::GraphDecisionRow;
 use crate::error::Result;
 use crate::quarantine::{QuarantineEntry, QuarantineRecord};
@@ -424,6 +425,20 @@ pub trait StoreRead {
     /// Returns a [`StorageError`](crate::error::StorageError) if the version cannot be read.
     fn schema_version(&self) -> Result<u32>;
 
+    /// A connector's position in one feed, if it has ever run.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StorageError`](crate::error::StorageError) if the cursor cannot be read.
+    fn connector_cursor(&self, connector: &str, feed: &str) -> Result<Option<ConnectorCursor>>;
+
+    /// Every connector cursor, for an operator asking which feeds are stale or failing.
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StorageError`](crate::error::StorageError) if the cursors cannot be read.
+    fn connector_cursors(&self) -> Result<Vec<ConnectorCursor>>;
+
     /// How many records of a kind are stored.
     ///
     /// # Errors
@@ -782,6 +797,18 @@ pub trait StoreWrite {
     /// nothing is written and no reference exists to dangle. [`crate::StorageError::Query`] for a backend
     /// failure.
     fn put_source_blob(&mut self, request: &BlobRequest<'_>) -> Result<BlobOutcome>;
+
+    /// Write a connector's cursor.
+    ///
+    /// Called inside the same transaction as the records the page produced. A cursor advanced
+    /// outside that transaction can disagree with the database, and the disagreement is invisible:
+    /// the next run starts after a window whose records were never stored. See
+    /// [`crate::cursor`].
+    ///
+    /// # Errors
+    ///
+    /// Returns a [`StorageError`](crate::error::StorageError) if the cursor cannot be written.
+    fn put_connector_cursor(&mut self, cursor: &ConnectorCursor) -> Result<()>;
 
     /// Remove a retained object deliberately, recording why.
     ///

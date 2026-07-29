@@ -103,6 +103,7 @@
 
 pub mod blob;
 pub mod checkpoint;
+pub mod cursor;
 pub mod decision;
 pub mod error;
 pub mod migration;
@@ -115,6 +116,7 @@ pub use blob::{
     RetentionClass, RetentionEvent, RetrievedBlob,
 };
 pub use checkpoint::CheckpointSummary;
+pub use cursor::{ConnectorCursor, CursorStatus};
 pub use decision::GraphDecisionRow;
 pub use error::StorageError;
 pub use migration::{MIGRATIONS, Migration, latest_version};

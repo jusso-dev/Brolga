@@ -20,6 +20,7 @@
 mod cli;
 mod commands;
 mod exit;
+mod fetch_command;
 mod graph_commands;
 mod output;
 mod serve_command;

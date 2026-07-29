@@ -1107,6 +1107,18 @@ impl<'store> ShiftingVersion<'store> {
 }
 
 impl StoreRead for ShiftingVersion<'_> {
+    fn connector_cursor(
+        &self,
+        connector: &str,
+        feed: &str,
+    ) -> Result<Option<brolga_storage::ConnectorCursor>, StorageError> {
+        self.inner.connector_cursor(connector, feed)
+    }
+
+    fn connector_cursors(&self) -> Result<Vec<brolga_storage::ConnectorCursor>, StorageError> {
+        self.inner.connector_cursors()
+    }
+
     fn get_checkpoint(&self, name: &str) -> Result<Option<serde_json::Value>, StorageError> {
         self.inner.get_checkpoint(name)
     }
