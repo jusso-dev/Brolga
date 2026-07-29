@@ -748,7 +748,7 @@ impl StoreRead for SqliteStore {
             .connection
             .prepare(
                 "SELECT observation, compared_with, verdict, algorithm, algorithm_version, reason,
-                        decided_at
+                        decided_at, actor, policy_context
                  FROM graph_decisions WHERE decision_kind = ?1 AND subject = ?2
                  ORDER BY decided_at ASC, id ASC",
             )
@@ -766,6 +766,8 @@ impl StoreRead for SqliteStore {
                     algorithm_version: u32::try_from(row.get::<_, i64>(4)?).unwrap_or(0),
                     reason: row.get(5)?,
                     decided_at: row.get(6)?,
+                    actor: row.get(7)?,
+                    policy_context: row.get(8)?,
                 })
             })
             .map_err(|error| StorageError::query("reading graph decisions", error))?;
@@ -1417,8 +1419,8 @@ impl StoreWrite for SqliteWriter<'_> {
             .execute(
                 "INSERT INTO graph_decisions
                     (id, decision_kind, subject, observation, compared_with, verdict, algorithm,
-                     algorithm_version, reason, decided_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                     algorithm_version, reason, decided_at, actor, policy_context)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
                  ON CONFLICT(id) DO UPDATE SET
                     verdict           = excluded.verdict,
                     algorithm         = excluded.algorithm,
@@ -1436,6 +1438,8 @@ impl StoreWrite for SqliteWriter<'_> {
                     i64::from(decision.algorithm_version),
                     decision.reason,
                     now_rfc3339(),
+                    decision.actor,
+                    decision.policy_context,
                 ],
             )
             .map_err(|error| StorageError::query("recording a graph decision", error))?;
