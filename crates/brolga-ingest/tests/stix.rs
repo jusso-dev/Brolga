@@ -515,7 +515,16 @@ fn relationship_fan_out_from_one_object_is_bounded() {
         "id": "intrusion-set--hub",
         "name": "Hub"
     })];
+    // Every target exists, so this test isolates fan-out rather than also tripping the
+    // unresolved-endpoint check.
     for index in 0..(MAX_FAN_OUT + 10) {
+        objects.push(serde_json::json!({
+            "type": "malware",
+            "spec_version": "2.1",
+            "id": format!("malware--{index}"),
+            "name": format!("Spoke {index}"),
+            "is_family": true
+        }));
         objects.push(serde_json::json!({
             "type": "relationship",
             "spec_version": "2.1",
