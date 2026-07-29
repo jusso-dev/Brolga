@@ -121,6 +121,26 @@ pub enum StorageError {
         reason: &'static str,
     },
 
+    /// An edge referenced a graph node that does not exist.
+    ///
+    /// Rejected rather than stored, because a dangling edge is invisible: traversal simply returns
+    /// nothing at that endpoint, and nothing distinguishes "no relationships" from "a relationship
+    /// pointing at a record that was never written".
+    #[error(
+        "{kind} {id} references {endpoint} {missing}, which does not exist; \
+         storing the edge would make traversal silently return nothing at that endpoint"
+    )]
+    DanglingEdge {
+        /// The kind of record carrying the reference.
+        kind: &'static str,
+        /// That record's identifier.
+        id: String,
+        /// `source` or `target`.
+        endpoint: &'static str,
+        /// The identifier that does not resolve.
+        missing: String,
+    },
+
     /// A transaction could not be started, committed, or rolled back.
     #[error("transaction could not be {action}: {reason}")]
     Transaction {
