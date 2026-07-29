@@ -208,6 +208,18 @@ somebody needs the schema.
 
 Prints the registry above, from the build you are running.
 
+### `brolga serve`
+
+Runs the read-only HTTP API so other services can pull context. See [the API reference](API.md).
+
+```bash
+brolga serve --database brolga.sqlite                 # loopback, no token
+BROLGA_API_TOKEN=… brolga serve --bind 0.0.0.0:8787   # reachable, token required
+```
+
+Binding an address reachable from another host without `BROLGA_API_TOKEN` set is refused at
+startup, exit code 3.
+
 ## Commands that are declared but not implemented
 
 | Command | Exits | Arrives in |

@@ -126,10 +126,13 @@ docker compose build
 docker compose run --rm brolga doctor
 ```
 
-Brolga is a command that runs and exits, not a service, so `docker compose run` is the normal way
-to use it and there is no port to expose. The image runs as a non-root user, is given no network
-because nothing in this release makes an outbound connection, and pins both its base images by
-digest.
+Brolga is mostly a command that runs and exits — `docker compose run` is the normal way to ingest
+and query — with one exception: `brolga serve` runs a read-only HTTP API so other services can
+pull context from it. The image runs as a non-root user and pins both its base images by digest.
+Ingestion still makes no outbound connection and can be run with no network at all.
+
+The API defaults to loopback and **refuses to start** on an address reachable from another host
+unless a token is configured. See [docs/API.md](docs/API.md).
 
 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) is the operator's guide: build, first run, ingesting a
 file, where the SQLite database lives, how to back it up without the WAL catching you out, and an

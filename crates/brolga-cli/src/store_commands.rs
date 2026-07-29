@@ -365,7 +365,7 @@ pub(crate) fn sources<Out: Write, Err: Write>(
 }
 
 /// Open and migrate a store, reporting failure the same way everywhere.
-fn open_store<Out: Write, Err: Write>(
+pub(crate) fn open_store<Out: Write, Err: Write>(
     path: &Path,
     streams: &mut Streams<Out, Err>,
 ) -> Result<SqliteStore, ExitCode> {

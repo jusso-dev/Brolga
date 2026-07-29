@@ -178,6 +178,9 @@ pub(crate) enum Command {
     Checkpoint(CheckpointCommand),
 
     /// Print shell completion for this build's command tree.
+    /// Serve the read-only HTTP API.
+    Serve(ServeArgs),
+
     Completion(CompletionArgs),
 
     /// Produce a context pack for a subject.
@@ -235,6 +238,25 @@ pub(crate) enum Mode {
 /// differently is how `stats` ends up reporting zero for a store `ingest` had just filled.
 #[derive(Debug, Args)]
 pub(crate) struct DatabaseArgs {
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+}
+
+/// `brolga serve`.
+#[derive(Debug, Args)]
+pub(crate) struct ServeArgs {
+    /// The address to bind.
+    ///
+    /// Loopback by default. Binding anything reachable from another host requires a token in
+    /// `BROLGA_API_TOKEN`, and the server refuses to start without one.
+    #[arg(long, default_value = "127.0.0.1:8787")]
+    pub(crate) bind: String,
+
+    /// How long a single request may run.
+    #[arg(long, default_value_t = 10)]
+    pub(crate) timeout_seconds: u64,
+
     /// Where the database lives.
     #[arg(long, default_value = "brolga.sqlite")]
     pub(crate) database: PathBuf,
@@ -457,6 +479,7 @@ impl Command {
             Self::Search(_) => "search",
             Self::Neighbours(_) => "neighbours",
             Self::Checkpoint(_) => "checkpoint",
+            Self::Serve(_) => "serve",
             Self::Completion(_) => "completion",
             Self::Context(_) => "context",
         }
