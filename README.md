@@ -37,6 +37,75 @@ OpenIOC or IODEF document, a CEF/LEEF/syslog file, or a CSV/NDJSON/plain-text
 indicator list and the records land in a local SQLite database, with the original bytes retained
 content-addressed and anything unreadable kept in quarantine with a reason.
 
+## Try it
+
+Two fixtures are checked in at [`examples/demo`](examples/demo). Nothing here reaches a network —
+the addresses are TEST-NET-3 and the domains are reserved for documentation, so the whole journey
+runs on an air-gapped machine.
+
+```console
+$ brolga ingest examples/demo/feed.json examples/demo/rule.yml --mode permissive
+permissive ingest: 26 offered, 26 accepted (26 new, 0 updated, 0 unchanged), 0 rejected
+(0 newly quarantined), 2 source object(s) retained, 0 already held
+
+$ brolga stats
+entities         3
+relationships    6
+claims           17
+sightings        0
+source_objects   2
+graph version    26
+retained         2 (626 bytes stored)
+quarantined      0 distinct, 0 occurrence(s)
+
+$ brolga context ip 203.0.113.42
+ipv4_address 203.0.113.42  —  malicious
+  Brolga assesses this observable as malicious.  (2 sources)
+  sigma.detection = 203.0.113.42
+  disposition = malicious
+  misp.ip-dst = 203.0.113.42
+gap: no sightings recorded; Brolga cannot say when this was last seen
+```
+
+Two sources, not one: the Sigma rule and the MISP attribute both reach that address, and the finding
+says so. The gap on the last line is Brolga telling you what it *cannot* say — nobody recorded when
+this was last seen, which is different from it never having been seen.
+
+The two files overlap on purpose: a MISP attribute and a Sigma rule naming the same address meet at
+one observable, because both canonicalise to the same identifier. That is the whole idea in three
+commands.
+
+Every finding cites the retained original it came from, and `brolga sources` lists them — so the
+answer expands back to exact evidence rather than asking you to trust it.
+
+For an agent, `brolga mcp` serves the same packs over stdio:
+
+```console
+$ brolga mcp --database brolga.sqlite
+```
+
+`brolga explain-plan incident_triage` shows what a profile will keep before you ask for a pack.
+
+`crates/brolga-cli/tests/journey.rs` runs every command above from a clean database on each CI run,
+so this section cannot drift from the code without a test failing.
+
+### What works today, and what does not
+
+| Capability | Status |
+| --- | --- |
+| Ingest — STIX 2.0/2.1, MISP, Sigma, YARA, OpenIOC, IODEF, CEF/LEEF/syslog, CSV/NDJSON | working |
+| Connectors — TAXII 2.0/2.1, MISP, OpenCTI, read-only | working |
+| Graph — dedup, resolution, contradictions, decay, traversal, checkpoints | working |
+| Context packs — versioned, fingerprinted, evidence-cited | working |
+| Profiles, ranking, budgets, quality metrics | working as libraries; **not yet applied inside pack assembly** |
+| Policy — TLP/PAP, capabilities, redistribution | working |
+| Interfaces — CLI, HTTP API with OpenAPI, MCP over stdio | working |
+| Expansion to L4/L5 | handles are issued; **the resolver endpoint is not built** |
+| PostgreSQL, plugins, exporters, benchmarks | **not supported** |
+
+The middle two rows are the ones worth reading twice. Brolga will tell you what it does not know;
+it should also tell you what it does not yet do.
+
 ```console
 $ brolga ingest bundle.json event.json indicators.txt --mode permissive
 permissive ingest: 39 offered, 37 accepted (37 new, 0 updated, 0 unchanged), 2 rejected
