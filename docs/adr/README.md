@@ -8,9 +8,10 @@ exception to a project-wide prohibition.
 
 | ADR | Title | Status | Issue |
 | --- | --- | --- | --- |
-| [0001](0001-workspace-boundaries-and-public-interface-versioning.md) | Cargo workspace boundaries and public interface versioning | accepted (§4 amended by 0002, §1 amended by 0003) | [#2](https://github.com/jusso-dev/Brolga/issues/2) |
+| [0001](0001-workspace-boundaries-and-public-interface-versioning.md) | Cargo workspace boundaries and public interface versioning | accepted (§4 amended by 0002; §1 amended by 0003 and 0004) | [#2](https://github.com/jusso-dev/Brolga/issues/2) |
 | [0002](0002-raise-msrv-to-1-88-for-a-security-advisory.md) | Raise the MSRV to 1.88.0 to take a security fix | accepted | [#9](https://github.com/jusso-dev/Brolga/issues/9) |
 | [0003](0003-ingestion-crate-boundary-and-parser-panic-policy.md) | The ingestion crate boundary, and how a parser is stopped from panicking | accepted | [#11](https://github.com/jusso-dev/Brolga/issues/11) |
+| [0004](0004-graph-crate-boundary.md) | The graph crate boundary | accepted | [#20](https://github.com/jusso-dev/Brolga/issues/20) |
 
 ## Rules
 
