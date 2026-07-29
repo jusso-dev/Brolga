@@ -955,3 +955,88 @@ async fn every_pack_records_its_policy_context() {
     assert!(body.contains("\"markings\":"), "{body}");
     assert!(body.contains("\"restricted\":"), "{body}");
 }
+
+// ---------------------------------------------------------------------------------------------
+// "OpenAPI matches runtime request and response types" — #35
+// ---------------------------------------------------------------------------------------------
+
+/// **The criterion.** Served rather than shipped as a file, so a consumer generating a client
+/// generates against the build it is actually talking to.
+#[tokio::test]
+async fn the_openapi_document_is_served_and_describes_the_live_types() {
+    let address = serve(ApiConfig::loopback(0)).await;
+    let (status, _, body) = request(address, "/api/v1/openapi.json", None).await;
+
+    assert_eq!(status, 200, "{body}");
+    let document: serde_json::Value = serde_json::from_str(&body).expect("a JSON document");
+
+    assert_eq!(document["openapi"], "3.1.0");
+
+    // The schemas are the generated ones, carrying the same versioned `$id` a payload's
+    // `schema_version` points at — so a client generated from this validates real responses.
+    let pack = &document["components"]["schemas"]["brolga.context_pack"];
+    assert!(
+        pack["$id"]
+            .as_str()
+            .is_some_and(|id| id.contains("brolga.context_pack/")),
+        "{pack}"
+    );
+}
+
+/// **The drift this exists to prevent.** Every documented path must actually route, and every
+/// documented method must be the one the router accepts. A document that describes a route the
+/// server does not serve produces a client that compiles and then 404s.
+#[tokio::test]
+async fn every_documented_path_actually_routes() {
+    let address = serve(ApiConfig::loopback(0)).await;
+
+    for (path, method, _) in brolga_api::openapi::PATHS {
+        // Substituted with a well-formed identifier that will not exist, so the assertion is about
+        // routing rather than about content.
+        let concrete = path.replace("{id}", "entity:00000000-0000-4000-8000-000000000000");
+        let target = format!("/api/v1{concrete}");
+
+        let (status, body) = if *method == "post" {
+            post(
+                address,
+                &target,
+                r#"{"subject":{"kind":"ip","value":"1.1.1.1"}}"#,
+            )
+            .await
+        } else {
+            let (status, _, body) = request(address, &target, None).await;
+            (status, body)
+        };
+
+        assert_ne!(
+            status, 405,
+            "`{target}` is documented as {method}, which the router does not accept"
+        );
+
+        // A 404 is ambiguous on its own: the route may be missing, or the *record* may be. The
+        // fallback answers with `"route"` as its kind and a real handler answers with the record's
+        // kind, so the envelope distinguishes them — which is the whole point of the fallback
+        // naming what it did not find.
+        if status == 404 {
+            assert!(
+                !body.contains("\"route\""),
+                "`{method} {target}` is documented but hit the router fallback: {body}"
+            );
+        }
+    }
+}
+
+/// The document is reachable without a credential only where `/health` is. Anything else would let
+/// an unauthenticated caller enumerate the surface of a server it cannot use.
+#[tokio::test]
+async fn the_openapi_document_is_behind_the_credential_like_every_other_route() {
+    let credential = Credential::new(TOKEN).unwrap();
+    let config = ApiConfig::bind("0.0.0.0:0".parse().unwrap(), Some(credential)).unwrap();
+    let address = serve(config).await;
+
+    let (unauthenticated, _, _) = request(address, "/api/v1/openapi.json", None).await;
+    assert_eq!(unauthenticated, 401);
+
+    let (authenticated, _, _) = request(address, "/api/v1/openapi.json", Some(TOKEN)).await;
+    assert_eq!(authenticated, 200);
+}
