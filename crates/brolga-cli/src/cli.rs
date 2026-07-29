@@ -191,11 +191,25 @@ pub(crate) enum Command {
     /// Produce a context pack for a subject.
     Context(ContextArgs),
 
+    /// Serve the Model Context Protocol over stdio.
+    ///
+    /// Reads JSON-RPC from stdin and writes it to stdout, so an agent runtime can start it as a
+    /// subprocess. Diagnostics go to stderr, which is the only stream left.
+    Mcp(McpArgs),
+
     /// Show what a context profile will do, without retrieving anything.
     ///
     /// The answer to "why did my pack not contain X?", available before the pack exists rather
     /// than by reading one and inferring backwards.
     ExplainPlan(ExplainPlanArgs),
+}
+
+/// `brolga mcp`.
+#[derive(Debug, Args)]
+pub(crate) struct McpArgs {
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
 }
 
 /// `brolga context`.
@@ -652,6 +666,7 @@ impl Command {
             Self::Ingest(_) => "ingest",
             Self::Fetch(_) => "fetch",
             Self::ExplainPlan(_) => "explain-plan",
+            Self::Mcp(_) => "mcp",
             Self::Stats(_) => "stats",
             Self::Show(_) => "show",
             Self::Quarantine(_) => "quarantine",
