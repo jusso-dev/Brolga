@@ -1096,3 +1096,83 @@ fn retuning_a_half_life_makes_stored_confidence_figures_stale() {
         "the recency component changed where its value comes from, which is composition"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Adversarial checks written during review, not by the module's author
+// ---------------------------------------------------------------------------------------------
+
+/// Standing must never rise with age, for any profile, at any age.
+///
+/// Swept across the configuration space rather than asserted at chosen points, because a curve
+/// tested at three ages is a curve tested where its author expected it to bend. A non-monotonic
+/// decay would let a record become *more* current by sitting still, which is the one thing ageing
+/// must never do — and integer arithmetic with a shift and a linear interpolation between rungs is
+/// exactly where an off-by-one would produce it.
+#[test]
+fn standing_never_rises_with_age_for_any_profile() {
+    for half_life in [1_u32, 2, 3, 7, 30, 90, 365, 4000] {
+        for floor in [0_u8, 1, 5, 25, 60, 100] {
+            let profile = DecayProfile::half_life(half_life, floor);
+            let mut previous = 101_u8;
+            for age in 0..=(half_life.saturating_mul(5)).min(2000) {
+                let standing = profile.standing_after(age);
+                assert!(
+                    standing <= previous,
+                    "half-life {half_life}, floor {floor}: standing rose from {previous} to \
+                     {standing} at age {age}"
+                );
+                previous = standing;
+            }
+        }
+    }
+}
+
+/// The floor holds however long a record is left, and however it was configured.
+///
+/// "Nothing decays to nought" is the module's own promise, and it is the one an operator relies on
+/// when they ask why a five-year-old indicator still appears: because somebody observed it, and a
+/// record nobody ever asserted is a different thing entirely.
+#[test]
+fn no_profile_and_no_age_can_drive_standing_below_the_retention_floor() {
+    for half_life in [1_u32, 5, 30, 365] {
+        for configured_floor in [0_u8, 1, 40] {
+            let profile = DecayProfile::half_life(half_life, configured_floor);
+            for age in [0_u32, 1, 100, 10_000, 2_147_483_647, u32::MAX] {
+                let standing = profile.standing_after(age);
+                assert!(
+                    standing >= DecayProfile::RETENTION_FLOOR,
+                    "half-life {half_life}, floor {configured_floor}, age {age}: {standing} is \
+                     below the retention floor"
+                );
+            }
+        }
+    }
+}
+
+/// The extremes must not wrap, saturate wrongly, or panic. `u32::MAX` days is roughly 11.7 million
+/// years, which no feed will publish — but a corrupt or hostile timestamp will, and the curve is
+/// built from shifts and divisions where that is exactly the input that breaks one.
+#[test]
+fn an_absurd_age_is_handled_arithmetically_rather_than_by_luck() {
+    let profile = DecayProfile::half_life(1, 0);
+    assert_eq!(
+        profile.standing_after(u32::MAX),
+        DecayProfile::RETENTION_FLOOR,
+        "an age no feed can legitimately publish still lands on the floor"
+    );
+    assert_eq!(
+        profile.standing_after(0),
+        100,
+        "and nothing is lost at zero"
+    );
+}
+
+/// A never-decaying profile is exempt at every age, not merely at plausible ones. A file digest
+/// names a fixed sequence of bytes; those bytes are as malicious in a thousand years as today.
+#[test]
+fn a_never_decaying_profile_is_exempt_at_every_age_including_absurd_ones() {
+    let profile = DecayProfile::never();
+    for age in [0_u32, 1, 365, 100_000, u32::MAX] {
+        assert_eq!(profile.standing_after(age), 100, "at age {age}");
+    }
+}
