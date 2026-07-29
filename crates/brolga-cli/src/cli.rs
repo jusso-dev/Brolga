@@ -192,6 +192,23 @@ pub(crate) enum Command {
     ///
     /// Declared but not implemented in this build. Exits `5`.
     Context(NotImplementedArgs),
+
+    /// Show what a context profile will do, without retrieving anything.
+    ///
+    /// The answer to "why did my pack not contain X?", available before the pack exists rather
+    /// than by reading one and inferring backwards.
+    ExplainPlan(ExplainPlanArgs),
+}
+
+/// `brolga explain-plan`.
+#[derive(Debug, Args)]
+pub(crate) struct ExplainPlanArgs {
+    /// Which profile to explain. Omitted lists every profile instead.
+    pub(crate) profile: Option<String>,
+
+    /// The environment to evaluate relevance against.
+    #[arg(long)]
+    pub(crate) environment: Option<String>,
 }
 
 /// `brolga ingest`.
@@ -600,6 +617,7 @@ impl Command {
             Self::Ingest(_) => Some("v0.2.0 — Core ingestion"),
             Self::Fetch(_) => Some("v0.6.0 — Connectors"),
             Self::Context(_) => Some("v0.4.0 — Compression engine"),
+            Self::ExplainPlan(_) => None,
             _ => None,
         }
     }
@@ -614,6 +632,7 @@ impl Command {
             Self::ExitCodes => "exit-codes",
             Self::Ingest(_) => "ingest",
             Self::Fetch(_) => "fetch",
+            Self::ExplainPlan(_) => "explain-plan",
             Self::Stats(_) => "stats",
             Self::Show(_) => "show",
             Self::Quarantine(_) => "quarantine",

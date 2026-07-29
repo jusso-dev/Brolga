@@ -81,6 +81,7 @@ pub(crate) fn run<Out: Write, Err: Write>(
         Command::Config(sub) => config(sub, global, streams),
         Command::ExitCodes => exit_codes(streams),
         Command::Context(_) => not_implemented(command, streams),
+        Command::ExplainPlan(args) => crate::plan_command::explain_plan(args, streams),
     }
 }
 

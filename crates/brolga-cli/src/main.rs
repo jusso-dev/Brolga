@@ -23,6 +23,7 @@ mod exit;
 mod fetch_command;
 mod graph_commands;
 mod output;
+mod plan_command;
 mod serve_command;
 mod store_commands;
 mod telemetry;
