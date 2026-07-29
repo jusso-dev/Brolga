@@ -7,7 +7,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use tower_http::timeout::TimeoutLayer;
 
@@ -38,6 +38,7 @@ where
         .route("/health", get(routes::health))
         .route("/ready", get(routes::ready::<S>))
         .route("/stats", get(routes::stats::<S>))
+        .route("/context", post(crate::context::context::<S>))
         .route("/entities", get(routes::search_entities::<S>))
         .route("/entities/{id}", get(routes::get_entity::<S>))
         .route(
