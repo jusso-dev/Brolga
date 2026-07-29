@@ -36,6 +36,7 @@ where
 
     let api = Router::new()
         .route("/health", get(routes::health))
+        .route("/openapi.json", get(routes::openapi))
         .route("/ready", get(routes::ready::<S>))
         .route("/stats", get(routes::stats::<S>))
         .route("/context", post(crate::context::context::<S>))

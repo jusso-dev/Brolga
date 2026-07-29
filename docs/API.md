@@ -248,6 +248,25 @@ single-observable indicators carry no count.
 presence in a feed is not evidence of maliciousness. `valid_from` and `valid_until` become the
 claim's validity window, and the indicator's `name` and `description` are kept as evidence.
 
+### OpenAPI
+
+`GET /api/v1/openapi.json` returns the document for the build you are talking to.
+
+Served rather than shipped as a file, and **generated rather than written**: every schema in it
+comes from the same generated JSON Schemas the canonical types produce. A hand-written document is a
+second definition of the wire format, and a second definition drifts quietly — the server keeps
+working, the document keeps validating, and the only symptom is a client generated from it that
+breaks on a field the server has been sending for months.
+
+Adding a field to a response therefore requires no change to the document.
+
+The path list is the one hand-maintained part, because a path is not a type. It is checked against
+the live router by a test that drives every documented path and fails if one does not route — using
+the error envelope's `kind` to tell a missing route from a missing record, since both answer 404.
+
+The document sits behind the credential like every other route. An unauthenticated caller
+enumerating the surface of a server it cannot use is a disclosure, not a convenience.
+
 ### Paging
 
 `?limit=` is clamped to 1000 rather than refused, so "give me everything" pages instead of failing.
