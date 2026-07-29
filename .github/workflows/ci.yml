@@ -213,16 +213,36 @@ jobs:
 
       # An unimplemented command must fail rather than pretend to succeed. Checked on every
       # platform, because "it exits 5" is the contract a pipeline depends on.
+      #
+      # `ingest` was the subject here until it was implemented. `context` replaced it rather than
+      # the step being deleted, because this check is the record of which promises are still
+      # outstanding — and it is what stops one outliving its delivery.
       - name: Confirm unimplemented commands fail loudly
         shell: bash
         run: |
           set +e
-          cargo run --locked --quiet --release --bin brolga -- ingest x > out.txt 2> err.txt
+          cargo run --locked --quiet --release --bin brolga -- context x > out.txt 2> err.txt
           status=$?
           set -e
           test "$status" -eq 5 || { echo "expected exit 5, got $status" >&2; exit 1; }
           test ! -s out.txt || { echo "an unimplemented command wrote to stdout" >&2; exit 1; }
           grep -qi "not implemented" err.txt
+
+      # The other half, and the one that matters now: an *implemented* command must actually work
+      # on every platform. A binary that builds everywhere and only runs on the author's machine is
+      # not cross-platform, and until this step existed nothing checked it.
+      - name: Confirm the ingest loop works end to end
+        shell: bash
+        run: |
+          set -e
+          printf 'evil.example\n192.0.2.10\n' > feed.txt
+          cargo run --locked --quiet --release --bin brolga -- \
+            ingest feed.txt --mode permissive --database smoke.sqlite > ingest.txt
+          grep -q "accepted" ingest.txt
+          cargo run --locked --quiet --release --bin brolga -- \
+            --output json stats --database smoke.sqlite > stats.json
+          grep -q '"claims"' stats.json
+          echo "ingest and stats ran on ${{ matrix.os }}"
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

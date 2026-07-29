@@ -147,7 +147,7 @@ pub(crate) enum Command {
     Ingest(IngestArgs),
 
     /// Show what is in the store.
-    Stats,
+    Stats(DatabaseArgs),
 
     /// Show one record by identifier.
     Show(ShowArgs),
@@ -156,7 +156,7 @@ pub(crate) enum Command {
     Quarantine(QuarantineArgs),
 
     /// List retained original source objects.
-    Sources,
+    Sources(DatabaseArgs),
 
     /// Produce a context pack for a subject.
     ///
@@ -205,6 +205,17 @@ pub(crate) enum Mode {
     Strict,
     /// Acceptable records are written; the rest are quarantined.
     Permissive,
+}
+
+/// Commands that only need to know which database to read.
+///
+/// A separate struct so every command names the database the same way. Two commands spelling it
+/// differently is how `stats` ends up reporting zero for a store `ingest` had just filled.
+#[derive(Debug, Args)]
+pub(crate) struct DatabaseArgs {
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
 }
 
 /// `brolga show`.
@@ -295,10 +306,10 @@ impl Command {
             Self::Config(_) => "config",
             Self::ExitCodes => "exit-codes",
             Self::Ingest(_) => "ingest",
-            Self::Stats => "stats",
+            Self::Stats(_) => "stats",
             Self::Show(_) => "show",
             Self::Quarantine(_) => "quarantine",
-            Self::Sources => "sources",
+            Self::Sources(_) => "sources",
             Self::Context(_) => "context",
         }
     }
