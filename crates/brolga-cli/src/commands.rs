@@ -80,7 +80,7 @@ pub(crate) fn run<Out: Write, Err: Write>(
         Command::Doctor => doctor(global, correlation, streams),
         Command::Config(sub) => config(sub, global, streams),
         Command::ExitCodes => exit_codes(streams),
-        Command::Context(_) => not_implemented(command, streams),
+        Command::Context(args) => crate::context_command::context(args, streams),
         Command::ExplainPlan(args) => crate::plan_command::explain_plan(args, streams),
     }
 }
@@ -379,33 +379,6 @@ fn exit_codes<Out: Write, Err: Write>(streams: &mut Streams<Out, Err>) -> ExitCo
     ExitCode::Success
 }
 
-/// A command that is declared but not implemented.
-///
-/// Fails loudly and names the milestone. `CONTRIBUTING.md` prohibits placeholders in production
-/// paths, and a command that prints "done" and does nothing is the worst kind of placeholder.
-fn not_implemented<Out: Write, Err: Write>(
-    command: &Command,
-    streams: &mut Streams<Out, Err>,
-) -> ExitCode {
-    let milestone = command.planned_milestone().unwrap_or("a later milestone");
-    let message = format!(
-        "`brolga {}` is not implemented in this build. It arrives in {milestone}.",
-        command.name(),
-    );
-
-    let _ = streams.problem(&message);
-
-    if streams.mode() == OutputMode::Json {
-        let _ = streams.result_json(&serde_json::json!({
-            "status": "not_implemented",
-            "command": command.name(),
-            "planned_milestone": milestone,
-        }));
-    }
-
-    ExitCode::NotImplemented
-}
-
 /// Read and parse every configuration file named on the command line.
 fn load_layers(paths: &[std::path::PathBuf]) -> core::result::Result<Vec<Layer>, String> {
     let mut layers = Vec::with_capacity(paths.len());
@@ -479,7 +452,6 @@ fn completion<Out: Write, Err: Write>(
 mod tests {
     use super::*;
     use crate::cli::{LogFormatArg, LogLevelArg, OutputModeArg};
-    use clap::Parser;
 
     fn global() -> GlobalOptions {
         GlobalOptions {
@@ -500,57 +472,14 @@ mod tests {
         String::from_utf8(bytes.to_vec()).expect("valid UTF-8")
     }
 
-    fn parse(argv: &[&str]) -> Cli {
-        Cli::try_parse_from(argv).expect("valid command line")
-    }
-
-    /// The failure mode CONTRIBUTING.md prohibits: printing "done" and doing nothing.
-    ///
-    /// `ingest` was in this list and no longer is, because it is implemented. That is the whole
-    /// point of the list shrinking rather than the test being deleted — it is the record of which
-    /// promises are still outstanding.
-    #[test]
-    fn an_unimplemented_command_fails_rather_than_pretending_to_work() {
-        {
-            let argv = vec!["brolga", "context", "example.com"];
-            let parsed = parse(&argv);
-            let mut streams = streams(OutputMode::Human);
-            let code = run(
-                &parsed.command,
-                &global(),
-                &CorrelationId::generate(),
-                &mut streams,
-            );
-
-            assert_eq!(code, ExitCode::NotImplemented);
-            let (out, err) = streams.into_parts();
-            assert!(out.is_empty(), "nothing may be reported as a result");
-            let rendered = text(&err);
-            assert!(rendered.contains("not implemented"), "{rendered}");
-            assert!(
-                rendered.contains("v0."),
-                "the message names the milestone: {rendered}"
-            );
-        }
-    }
-
-    #[test]
-    fn an_unimplemented_command_says_so_in_structured_output_too() {
-        let parsed = parse(&["brolga", "--output", "json", "context"]);
-        let mut streams = streams(OutputMode::Json);
-        let code = run(
-            &parsed.command,
-            &global(),
-            &CorrelationId::generate(),
-            &mut streams,
-        );
-
-        assert_eq!(code, ExitCode::NotImplemented);
-        let (out, _) = streams.into_parts();
-        let parsed: serde_json::Value = serde_json::from_slice(&out).unwrap();
-        assert_eq!(parsed["status"], "not_implemented");
-        assert!(parsed["planned_milestone"].is_string());
-    }
+    // Every declared command is now implemented, so the two tests that lived here — one asserting
+    // an unimplemented command fails loudly, one asserting it says so in JSON — have nothing left
+    // to point at. Removed rather than repointed at an arbitrary command: a test whose subject no
+    // longer exists is one that quietly stops meaning anything.
+    //
+    // `ExitCode::NotImplemented` stays in the registry, which the test below covers. It is a
+    // compatibility surface a pipeline may already branch on, and removing it because nothing
+    // currently emits one would break a script for a reason unrelated to the script.
 
     #[test]
     fn the_exit_code_registry_is_queryable_from_the_binary() {

@@ -51,7 +51,6 @@ pub mod routes;
 pub mod schema;
 pub mod server;
 pub mod state;
-pub mod subject;
 
 pub use auth::{Credential, CredentialRejected};
 pub use config::{ApiConfig, ConfigRejected};

@@ -19,6 +19,7 @@
 
 mod cli;
 mod commands;
+mod context_command;
 mod exit;
 mod fetch_command;
 mod graph_commands;

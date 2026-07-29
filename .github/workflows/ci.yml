@@ -211,22 +211,34 @@ jobs:
           grep -q '"not_implemented"' codes.json
           echo "exit-code registry reported on stdout as JSON"
 
-      # An unimplemented command must fail rather than pretend to succeed. Checked on every
-      # platform, because "it exits 5" is the contract a pipeline depends on.
+      # Every declared command is implemented, so nothing exits 5 any more. This step used to
+      # assert that `context` did — it was the record of which promises were outstanding, and the
+      # promise has been delivered.
       #
-      # `ingest` was the subject here until it was implemented. `context` replaced it rather than
-      # the step being deleted, because this check is the record of which promises are still
-      # outstanding — and it is what stops one outliving its delivery.
-      - name: Confirm unimplemented commands fail loudly
+      # Replaced rather than deleted: the useful half was always "a command does what it claims on
+      # every platform", and `context` is now the one worth checking, because it is the command
+      # that touches the store, the policy engine, and the pack schema in one call.
+      - name: Confirm context produces a pack on every platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo run --locked --quiet --release --bin brolga -- \
+            --output json context ip 203.0.113.42 --database smoke-context.sqlite > pack.json
+          grep -q '"schema_version"' pack.json
+          grep -q '"disposition"' pack.json
+          grep -q '"fingerprint"' pack.json
+          echo "context produced a versioned, fingerprinted pack"
+
+      # A malformed subject is the caller's mistake and must exit 2, not 0 and not a crash.
+      - name: Confirm a malformed subject is a usage error
         shell: bash
         run: |
           set +e
-          cargo run --locked --quiet --release --bin brolga -- context x > out.txt 2> err.txt
+          cargo run --locked --quiet --release --bin brolga -- context ip not-an-address > out.txt 2> err.txt
           status=$?
           set -e
-          test "$status" -eq 5 || { echo "expected exit 5, got $status" >&2; exit 1; }
-          test ! -s out.txt || { echo "an unimplemented command wrote to stdout" >&2; exit 1; }
-          grep -qi "not implemented" err.txt
+          test "$status" -eq 2 || { echo "expected exit 2, got $status" >&2; exit 1; }
+          test ! -s out.txt || { echo "a rejected request wrote a result to stdout" >&2; exit 1; }
 
       # The other half, and the one that matters now: an *implemented* command must actually work
       # on every platform. A binary that builds everywhere and only runs on the author's machine is

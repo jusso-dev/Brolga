@@ -32,7 +32,7 @@ use brolga_storage::store::{Direction, EdgeQuery, Page, StoreRead};
 
 use crate::error::{ApiError, RequestId, from_read_failure};
 use crate::state::ApiState;
-use crate::subject::{self, SubjectRejected};
+use brolga_graph::subject;
 
 /// The schema a consumer sees on the pack.
 ///
@@ -126,15 +126,15 @@ pub async fn context<S: StoreRead>(
 ) -> Result<Json<ContextPack>, ApiError> {
     let request_id = RequestId::generate();
 
-    let observable = subject::resolve(&request.subject.kind, &request.subject.value).map_err(
-        |error| match error {
-            SubjectRejected::UnknownKind { .. } | SubjectRejected::Malformed { .. } => {
-                ApiError::BadRequest {
-                    message: error.to_string(),
-                }
+    // Every rejection is the caller's to fix. `SubjectRejected` is `#[non_exhaustive]`, and a new
+    // variant is still a bad request rather than an internal failure — mapping an unknown
+    // rejection to a 500 would blame Brolga for a value the caller sent.
+    let observable =
+        subject::resolve(&request.subject.kind, &request.subject.value).map_err(|error| {
+            ApiError::BadRequest {
+                message: error.to_string(),
             }
-        },
-    )?;
+        })?;
 
     let observable_id = observable.id();
     let node = NodeRef::Observable(observable_id);
