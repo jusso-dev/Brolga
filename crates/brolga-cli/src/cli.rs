@@ -306,6 +306,8 @@ pub(crate) enum FetchSource {
     Taxii(TaxiiArgs),
     /// Read a MISP instance.
     Misp(MispArgs),
+    /// Poll an OpenCTI instance, or import a STIX bundle it exported.
+    Opencti(OpenCtiArgs),
 }
 
 impl FetchSource {
@@ -314,6 +316,7 @@ impl FetchSource {
         match self {
             Self::Taxii(_) => "taxii",
             Self::Misp(_) => "misp",
+            Self::Opencti(_) => "opencti",
         }
     }
 }
@@ -367,7 +370,19 @@ pub(crate) enum MispFeedArg {
     Warninglists,
 }
 
-/// `brolga serve`.
+/// `brolga fetch opencti`.
+#[derive(Debug, Args)]
+pub(crate) struct OpenCtiArgs {
+    /// The OpenCTI instance's base URL. The GraphQL endpoint is `<url>/graphql`.
+    pub(crate) url: String,
+
+    /// A name for this instance, defaulting to the URL's host.
+    ///
+    /// Half of the cursor key it owns, so an instance that moves hostname does not resync.
+    #[arg(long)]
+    pub(crate) name: Option<String>,
+}
+
 /// `brolga serve`.
 #[derive(Debug, Args)]
 pub(crate) struct ServeArgs {

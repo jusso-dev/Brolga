@@ -12,7 +12,8 @@ exception to a project-wide prohibition.
 | [0002](0002-raise-msrv-to-1-88-for-a-security-advisory.md) | Raise the MSRV to 1.88.0 to take a security fix | accepted | [#9](https://github.com/jusso-dev/Brolga/issues/9) |
 | [0003](0003-ingestion-crate-boundary-and-parser-panic-policy.md) | The ingestion crate boundary, and how a parser is stopped from panicking | accepted | [#11](https://github.com/jusso-dev/Brolga/issues/11) |
 | [0004](0004-graph-crate-boundary.md) | The graph crate boundary | accepted | [#20](https://github.com/jusso-dev/Brolga/issues/20) |
-| [0005](0005-connector-crate-boundary-and-outbound-network-policy.md) | The connector crate boundary, and how an outbound fetch is constrained | accepted | [#44](https://github.com/jusso-dev/Brolga/issues/44) |
+| [0005](0005-connector-crate-boundary-and-outbound-network-policy.md) | The connector crate boundary, and how an outbound fetch is constrained | accepted (§5 amended by 0006) | [#44](https://github.com/jusso-dev/Brolga/issues/44) |
+| [0006](0006-a-closed-set-of-query-bodies.md) | A closed set of query bodies, for GraphQL sources | accepted | [#43](https://github.com/jusso-dev/Brolga/issues/43) |
 
 ## Rules
 

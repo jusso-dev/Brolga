@@ -15,15 +15,16 @@
 use std::io::Write;
 
 use brolga_connectors::{
-    ConnectorError, FeedRef, MispClient, MispFeed, MispInstance, MispTarget, PolicyTransport,
-    SyncOptions, SyncReport, TaxiiClient, sync_collection, sync_misp_feed,
+    ConnectorError, FeedRef, MispClient, MispFeed, MispInstance, MispTarget, OpenCtiClient,
+    OpenCtiInstance, PolicyTransport, SyncOptions, SyncReport, TaxiiClient, sync_collection,
+    sync_misp_feed, sync_opencti,
 };
 use brolga_ingest::{IngestMode, Pipeline};
 use brolga_model::Timestamp;
 use brolga_model::provenance::SensitiveText;
 use brolga_security::{CancellationToken, NetworkPolicy, ResourceLimits};
 
-use crate::cli::{FetchArgs, FetchSource, MispArgs, MispFeedArg, TaxiiArgs};
+use crate::cli::{FetchArgs, FetchSource, MispArgs, MispFeedArg, OpenCtiArgs, TaxiiArgs};
 use crate::exit::ExitCode;
 use crate::output::{OutputMode, Streams};
 use crate::store_commands::{open_store, registry};
@@ -48,6 +49,72 @@ pub(crate) fn fetch<Out: Write, Err: Write>(
     match &args.source {
         FetchSource::Taxii(taxii) => fetch_taxii(args, taxii, streams),
         FetchSource::Misp(misp) => fetch_misp(args, misp, streams),
+        FetchSource::Opencti(opencti) => fetch_opencti(args, opencti, streams),
+    }
+}
+
+/// The environment variable an OpenCTI token is read from.
+pub(crate) const OPENCTI_TOKEN_VARIABLE: &str = "BROLGA_OPENCTI_TOKEN";
+
+/// `brolga fetch opencti`.
+fn fetch_opencti<Out: Write, Err: Write>(
+    args: &FetchArgs,
+    opencti: &OpenCtiArgs,
+    streams: &mut Streams<Out, Err>,
+) -> ExitCode {
+    let Some(token) = std::env::var(OPENCTI_TOKEN_VARIABLE)
+        .ok()
+        .and_then(|token| SensitiveText::new(token).ok())
+    else {
+        let _ = streams.problem(&format!(
+            "no API token: set {OPENCTI_TOKEN_VARIABLE}. A token is not accepted as a flag, \
+             because a credential on a command line is in the shell history and in any process \
+             listing"
+        ));
+        return ExitCode::Usage;
+    };
+
+    let name = opencti
+        .name
+        .clone()
+        .unwrap_or_else(|| host_of(&opencti.url).unwrap_or_else(|| opencti.url.clone()));
+
+    let transport = PolicyTransport::new(policy_for(args));
+    let client = OpenCtiClient::new(&transport);
+    let instance = OpenCtiInstance::new(name.clone(), opencti.url.clone(), token);
+
+    match client.version(&instance) {
+        Ok(version) => {
+            let _ = streams.note(&format!("{name} — OpenCTI {version}"));
+        }
+        Err(error) => {
+            let _ = streams.problem(&error.to_string());
+            return exit_for(&error);
+        }
+    }
+
+    let mut store = match open_store(&args.database, streams) {
+        Ok(store) => store,
+        Err(code) => return code,
+    };
+
+    let now = Timestamp::from_offset_date_time(time::OffsetDateTime::now_utc());
+    let outcome = sync_opencti(
+        &client,
+        &mut store,
+        &pipeline_for(),
+        &instance,
+        now,
+        options_for(args),
+        &cancel_for(args),
+    );
+
+    match outcome {
+        Ok(report) => report_fetch(args.source.as_str(), &[report], None, streams),
+        Err(error) => {
+            let _ = streams.problem(&error.to_string());
+            report_fetch(args.source.as_str(), &[], Some(&error), streams)
+        }
     }
 }
 
