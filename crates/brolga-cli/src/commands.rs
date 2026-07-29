@@ -13,7 +13,9 @@ use brolga_config::{Diagnostics, config_schema};
 use brolga_storage::sqlite::SqliteStore;
 use brolga_storage::store::{IntelligenceStore, RecordKind, StoreRead};
 
-use crate::cli::{Command, ConfigCommand, GlobalOptions, InitArgs};
+use crate::cli::{
+    CheckpointCommand, Cli, Command, CompletionArgs, ConfigCommand, GlobalOptions, InitArgs,
+};
 use crate::exit::ExitCode;
 use crate::output::{CorrelationId, OutputMode, Streams};
 
@@ -60,6 +62,19 @@ pub(crate) fn run<Out: Write, Err: Write>(
         Command::Show(args) => crate::store_commands::show(args, streams),
         Command::Quarantine(args) => crate::store_commands::quarantine(args, streams),
         Command::Sources(args) => crate::store_commands::sources(&args.database, streams),
+        Command::Search(args) => crate::graph_commands::search(args, streams),
+        Command::Neighbours(args) => crate::graph_commands::neighbours(args, streams),
+        Command::Checkpoint(sub) => match sub {
+            CheckpointCommand::Take(args) => crate::graph_commands::checkpoint_take(args, streams),
+            CheckpointCommand::List(args) => {
+                crate::graph_commands::checkpoint_list(&args.database, streams)
+            }
+            CheckpointCommand::Diff(args) => crate::graph_commands::checkpoint_diff(args, streams),
+            CheckpointCommand::Remove(args) => {
+                crate::graph_commands::checkpoint_remove(args, streams)
+            }
+        },
+        Command::Completion(args) => completion(args, streams),
         Command::Doctor => doctor(global, correlation, streams),
         Command::Config(sub) => config(sub, global, streams),
         Command::ExitCodes => exit_codes(streams),
@@ -425,6 +440,32 @@ fn report_diagnostics<Out: Write, Err: Write>(
     ));
 }
 
+/// `brolga completion`.
+///
+/// Generated from this build's command tree rather than shipped as a static file, so completion
+/// can never advertise a command or flag the binary does not have — which is worse than no
+/// completion, because it reads as documentation.
+fn completion<Out: Write, Err: Write>(
+    args: &CompletionArgs,
+    streams: &mut Streams<Out, Err>,
+) -> ExitCode {
+    let mut command = <Cli as clap::CommandFactory>::command();
+    let mut rendered: Vec<u8> = Vec::new();
+    clap_complete::generate(args.shell, &mut command, "brolga", &mut rendered);
+
+    match String::from_utf8(rendered) {
+        Ok(script) => {
+            // A result, so it redirects into a file without commentary mixed in.
+            let _ = streams.result_line(script.trim_end());
+            ExitCode::Success
+        }
+        Err(_) => {
+            let _ = streams.problem("the completion script was not valid UTF-8");
+            ExitCode::Failure
+        }
+    }
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -434,7 +475,7 @@ fn report_diagnostics<Out: Write, Err: Write>(
 )]
 mod tests {
     use super::*;
-    use crate::cli::{Cli, LogFormatArg, LogLevelArg, OutputModeArg};
+    use crate::cli::{LogFormatArg, LogLevelArg, OutputModeArg};
     use clap::Parser;
 
     fn global() -> GlobalOptions {

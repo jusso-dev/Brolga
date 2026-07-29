@@ -714,3 +714,263 @@ fn a_missing_input_file_reports_an_io_failure_rather_than_a_parse_failure() {
     assert!(stderr(&missing).contains("cannot read"));
     assert!(stdout(&missing).is_empty());
 }
+
+// ---------------------------------------------------------------------------------------------
+// The user journey #34 asks for, run end to end as a process
+// ---------------------------------------------------------------------------------------------
+
+/// #34's first acceptance criterion. Ingest, find, walk, baseline, change, diff — the loop an
+/// operator actually performs, through the compiled binary rather than through the library.
+#[test]
+fn the_example_user_journey_runs_end_to_end() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    let ingest = brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+    assert_eq!(code(&ingest), 0, "stderr: {}", stderr(&ingest));
+
+    // Find something.
+    let found = brolga_in(
+        path,
+        &["--output", "json", "search", "--kind", "intrusion_set"],
+    );
+    assert_eq!(code(&found), 0);
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&found)).unwrap();
+    let id = parsed["entities"][0]["id"]
+        .as_str()
+        .expect("the bundle has an intrusion set")
+        .to_owned();
+
+    // Walk out from it.
+    let walked = brolga_in(
+        path,
+        &["--output", "json", "neighbours", &id, "--depth", "2"],
+    );
+    assert_eq!(code(&walked), 0, "stderr: {}", stderr(&walked));
+    let neighbourhood: serde_json::Value = serde_json::from_str(&stdout(&walked)).unwrap();
+    assert!(
+        neighbourhood["nodes"].as_array().unwrap().len() > 1,
+        "the actor is connected to something: {neighbourhood}"
+    );
+    assert_eq!(
+        neighbourhood["complete"].as_bool(),
+        Some(true),
+        "a small graph within a generous budget is not truncated"
+    );
+
+    // Baseline it.
+    let took = brolga_in(path, &["checkpoint", "take", "base", "--from", &id]);
+    assert_eq!(code(&took), 0, "stderr: {}", stderr(&took));
+
+    let listed = brolga_in(path, &["--output", "json", "checkpoint", "list"]);
+    let baselines: serde_json::Value = serde_json::from_str(&stdout(&listed)).unwrap();
+    assert_eq!(baselines["checkpoints"].as_array().unwrap().len(), 1);
+
+    // Re-ingest the identical file and take a second baseline. Nothing material changed, so the
+    // delta must be empty — this is the property the whole design turns on.
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+    let again = brolga_in(path, &["checkpoint", "take", "after", "--from", &id]);
+    assert_eq!(code(&again), 0);
+
+    let diff = brolga_in(
+        path,
+        &["--output", "json", "checkpoint", "diff", "base", "after"],
+    );
+    assert_eq!(code(&diff), 0, "stderr: {}", stderr(&diff));
+    let delta: serde_json::Value = serde_json::from_str(&stdout(&diff)).unwrap();
+    assert_eq!(
+        delta["changes"].as_array().unwrap().len(),
+        0,
+        "a no-op re-import must produce an empty delta: {delta}"
+    );
+    assert!(delta["unchanged"].as_u64().unwrap_or(0) > 0);
+}
+
+/// A delta that says "changed" without saying *which facet* is not actionable — an operator cannot
+/// tell a re-attested source from a renamed actor, and those call for very different responses.
+#[test]
+fn a_reported_change_names_the_facets_that_moved() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+    let found = brolga_in(
+        path,
+        &["--output", "json", "search", "--kind", "intrusion_set"],
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&found)).unwrap();
+    let id = parsed["entities"][0]["id"].as_str().unwrap().to_owned();
+
+    brolga_in(path, &["checkpoint", "take", "base", "--from", &id]);
+
+    // Rewrite the bundle with an extra alias on the intrusion set.
+    let source = std::fs::read_to_string(path.join("bundle.json")).unwrap();
+    let mut document: serde_json::Value = serde_json::from_str(&source).unwrap();
+    for object in document["objects"].as_array_mut().unwrap() {
+        if object["type"] == "intrusion-set" {
+            object["aliases"]
+                .as_array_mut()
+                .unwrap()
+                .push(serde_json::json!("A-NEW-ALIAS"));
+        }
+    }
+    std::fs::write(
+        path.join("bundle-v2.json"),
+        serde_json::to_string_pretty(&document).unwrap(),
+    )
+    .unwrap();
+
+    brolga_in(path, &["ingest", "bundle-v2.json", "--mode", "permissive"]);
+    brolga_in(path, &["checkpoint", "take", "mutated", "--from", &id]);
+
+    let diff = brolga_in(
+        path,
+        &["--output", "json", "checkpoint", "diff", "base", "mutated"],
+    );
+    assert_eq!(code(&diff), 0, "stderr: {}", stderr(&diff));
+    let delta: serde_json::Value = serde_json::from_str(&stdout(&diff)).unwrap();
+
+    let changes = delta["changes"].as_array().unwrap();
+    assert!(!changes.is_empty(), "the alias is a material change");
+
+    // The renamed actor names its `names` facet; everything else moved only because it is now
+    // attested by a second source object.
+    let renamed = changes
+        .iter()
+        .find(|change| {
+            change["facets"]
+                .as_array()
+                .is_some_and(|facets| facets.iter().any(|facet| facet == "names"))
+        })
+        .expect("exactly the renamed record names the `names` facet");
+    // A `RecordKey` renders as `class/identifier`, so the identifier is a suffix rather than the
+    // whole key.
+    assert!(
+        renamed["record"]
+            .as_str()
+            .is_some_and(|record| record.ends_with(&id)),
+        "the renamed record is the one that was renamed: {}",
+        renamed["record"]
+    );
+    assert!(!renamed["evidence"].as_array().unwrap().is_empty());
+}
+
+/// Comparing two baselines taken over different traversals would report records as removed when the
+/// narrower one merely did not reach them. Refusing is the point, not a limitation.
+#[test]
+fn diffing_baselines_of_different_shapes_is_refused_rather_than_answered() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+    let found = brolga_in(
+        path,
+        &["--output", "json", "search", "--kind", "intrusion_set"],
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&found)).unwrap();
+    let actor = parsed["entities"][0]["id"].as_str().unwrap().to_owned();
+
+    let malware = brolga_in(
+        path,
+        &["--output", "json", "search", "--kind", "malware_family"],
+    );
+    let malware: serde_json::Value = serde_json::from_str(&stdout(&malware)).unwrap();
+    let other = malware["entities"][0]["id"].as_str().unwrap().to_owned();
+
+    brolga_in(
+        path,
+        &["checkpoint", "take", "from-actor", "--from", &actor],
+    );
+    brolga_in(
+        path,
+        &["checkpoint", "take", "from-malware", "--from", &other],
+    );
+
+    let diff = brolga_in(path, &["checkpoint", "diff", "from-actor", "from-malware"]);
+    assert_ne!(
+        code(&diff),
+        0,
+        "differently shaped baselines must be refused"
+    );
+    assert!(
+        stderr(&diff).contains("different traversals"),
+        "and must say why: {}",
+        stderr(&diff)
+    );
+    assert!(stdout(&diff).is_empty(), "no result on stdout");
+}
+
+/// A filter value that is not in the vocabulary must say what *is*, rather than returning nothing
+/// and letting the operator conclude the graph is empty.
+#[test]
+fn an_unknown_filter_value_lists_the_ones_that_exist() {
+    let workspace = workspace();
+    let bad = brolga_in(
+        workspace.path(),
+        &["search", "--kind", "definitely-not-a-kind"],
+    );
+
+    assert_eq!(code(&bad), 2, "usage");
+    assert!(stdout(&bad).is_empty());
+    let message = stderr(&bad);
+    assert!(message.contains("threat_actor"), "{message}");
+    assert!(message.contains("malware_family"), "{message}");
+}
+
+/// Completion is generated from this build's command tree, so it can never advertise a command the
+/// binary does not have — which would be worse than no completion, because it reads as
+/// documentation.
+#[test]
+fn completion_is_generated_from_the_command_tree_this_build_actually_has() {
+    let workspace = workspace();
+    let script = brolga_in(workspace.path(), &["completion", "bash"]);
+
+    assert_eq!(code(&script), 0);
+    let rendered = stdout(&script);
+    for command in ["ingest", "search", "neighbours", "checkpoint", "stats"] {
+        assert!(
+            rendered.contains(command),
+            "{command} is missing from completion"
+        );
+    }
+    assert!(
+        !rendered.contains("compress"),
+        "completion must not advertise a command this build does not have"
+    );
+}
+
+/// A truncated baseline poisons every delta taken against it, so taking one says so loudly rather
+/// than as a note that `--quiet` would swallow.
+#[test]
+fn taking_a_truncated_baseline_warns_on_stderr() {
+    let workspace = workspace();
+    let path = workspace.path();
+
+    brolga_in(path, &["ingest", "bundle.json", "--mode", "permissive"]);
+    let found = brolga_in(
+        path,
+        &["--output", "json", "search", "--kind", "intrusion_set"],
+    );
+    let parsed: serde_json::Value = serde_json::from_str(&stdout(&found)).unwrap();
+    let id = parsed["entities"][0]["id"].as_str().unwrap().to_owned();
+
+    // Depth 1 cannot reach the whole neighbourhood the default would.
+    let shallow = brolga_in(
+        path,
+        &[
+            "checkpoint",
+            "take",
+            "shallow",
+            "--from",
+            &id,
+            "--depth",
+            "1",
+        ],
+    );
+    assert_eq!(code(&shallow), 0, "a truncated capture still succeeds");
+    assert!(
+        stderr(&shallow).contains("truncated"),
+        "but it says so: {}",
+        stderr(&shallow)
+    );
+}

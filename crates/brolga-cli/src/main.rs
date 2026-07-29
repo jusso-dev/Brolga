@@ -20,6 +20,7 @@
 mod cli;
 mod commands;
 mod exit;
+mod graph_commands;
 mod output;
 mod store_commands;
 mod telemetry;

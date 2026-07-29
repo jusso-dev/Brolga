@@ -45,6 +45,21 @@ pub enum LifecycleStatus {
 }
 
 impl LifecycleStatus {
+    /// Every status.
+    ///
+    /// See [`crate::EntityKind::all`] for why this exists rather than being spelled out at each
+    /// call site.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::Active,
+            Self::Revoked,
+            Self::Superseded,
+            Self::Expired,
+            Self::Deprecated,
+        ]
+    }
+
     /// Whether the assertion currently stands.
     ///
     /// The three false cases are distinct and are kept distinct in the type. A caller that only
@@ -198,5 +213,32 @@ mod tests {
         assert!(serde_json::from_str::<LifecycleStatus>("\"deleted\"").is_err());
         assert!(serde_json::from_str::<Disposition>("\"probably_bad\"").is_err());
         assert!(serde_json::from_str::<Disposition>("1").is_err());
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+mod all_variants_tests {
+    use super::LifecycleStatus;
+
+    /// See the equivalent in `entity.rs`: the wildcard-free `match` is what makes a new variant a
+    /// build failure rather than a silently unreachable filter value.
+    #[test]
+    fn every_lifecycle_status_appears_in_all() {
+        for status in LifecycleStatus::all() {
+            match status {
+                LifecycleStatus::Active
+                | LifecycleStatus::Revoked
+                | LifecycleStatus::Superseded
+                | LifecycleStatus::Expired
+                | LifecycleStatus::Deprecated => {}
+            }
+        }
+        assert_eq!(LifecycleStatus::all().len(), 5);
     }
 }

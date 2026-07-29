@@ -69,6 +69,31 @@ pub enum EntityKind {
 }
 
 impl EntityKind {
+    /// Every kind.
+    ///
+    /// For a caller that has to offer the whole vocabulary — a `--kind` flag, a diagnostic that says
+    /// what *is* accepted, a completion script. A hard-coded list at each of those call sites drifts
+    /// the first time a variant is added, and the drift is silent.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[
+            Self::ThreatActor,
+            Self::MalwareFamily,
+            Self::Tool,
+            Self::Campaign,
+            Self::IntrusionSet,
+            Self::Vulnerability,
+            Self::AttackTechnique,
+            Self::Infrastructure,
+            Self::Identity,
+            Self::Incident,
+            Self::Report,
+            Self::Asset,
+            Self::Location,
+            Self::Sector,
+        ]
+    }
+
     /// The `snake_case` wire discriminator.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
@@ -449,5 +474,53 @@ mod tests {
         // Two entities sharing an alias remain distinct records.
         let other = Entity::derive_id(EntityKind::ThreatActor, &short("vendor-y"), &short("Z1"));
         assert_ne!(entity.id, other);
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::indexing_slicing
+)]
+mod all_variants_tests {
+    use super::EntityKind;
+
+    /// `all()` must actually be all of them.
+    ///
+    /// The `match` is what does the work, and it has no wildcard arm on purpose: `#[non_exhaustive]`
+    /// binds other crates but not this one, so adding a variant fails to **compile** here rather
+    /// than quietly producing a `--kind` flag that cannot name it.
+    #[test]
+    fn every_entity_kind_appears_in_all() {
+        for kind in EntityKind::all() {
+            match kind {
+                EntityKind::ThreatActor
+                | EntityKind::MalwareFamily
+                | EntityKind::Tool
+                | EntityKind::Campaign
+                | EntityKind::IntrusionSet
+                | EntityKind::Vulnerability
+                | EntityKind::AttackTechnique
+                | EntityKind::Infrastructure
+                | EntityKind::Identity
+                | EntityKind::Incident
+                | EntityKind::Report
+                | EntityKind::Asset
+                | EntityKind::Location
+                | EntityKind::Sector => {}
+            }
+        }
+        assert_eq!(EntityKind::all().len(), 14);
+
+        let mut names: Vec<_> = EntityKind::all().iter().map(|k| k.as_str()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            EntityKind::all().len(),
+            "names must be distinct"
+        );
     }
 }
