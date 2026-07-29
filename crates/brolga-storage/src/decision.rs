@@ -32,6 +32,16 @@ pub struct GraphDecisionRow {
     pub reason: String,
     /// When it was recorded, as an RFC 3339 string. Runtime metadata, never part of the identity.
     pub decided_at: String,
+    /// Who made it, where a person did.
+    ///
+    /// `None` for a decision an algorithm derived. Deliberately not filled in with "system" or
+    /// "brolga": an unattributed decision must stay distinguishable from an attributed one, and a
+    /// placeholder that looks like an actor destroys that distinction.
+    pub actor: Option<String>,
+    /// Under what authority — a case reference, a policy name, a ticket.
+    ///
+    /// `None` for a derived decision, `Some` whenever `actor` is.
+    pub policy_context: Option<String>,
 }
 
 impl GraphDecisionRow {
@@ -43,12 +53,16 @@ impl GraphDecisionRow {
     /// rather than sitting beside it claiming both are current.
     #[must_use]
     pub fn derive_id(&self) -> String {
+        // The actor participates, so two analysts overriding one claim are two rows rather than one
+        // overwriting the other. The verdict, the reason, and the clock do not, so re-running or
+        // rewording updates in place.
         let material = format!(
-            "{}|{}|{}|{}",
+            "{}|{}|{}|{}|{}",
             self.kind,
             self.subject,
             self.observation,
             self.compared_with.as_deref().unwrap_or("-"),
+            self.actor.as_deref().unwrap_or("-"),
         );
         ContentHash::of(material.as_bytes()).to_string()
     }
