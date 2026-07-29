@@ -101,6 +101,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod audit;
 pub mod blob;
 pub mod checkpoint;
 pub mod cursor;
@@ -111,6 +112,9 @@ pub mod quarantine;
 pub mod sqlite;
 pub mod store;
 
+pub use audit::{
+    AuditAction, AuditEvent, BoundedLabels, FailurePolicy, MAX_LABEL_CARDINALITY, Outcome,
+};
 pub use blob::{
     BlobCodec, BlobMetadata, BlobOutcome, BlobRequest, DEFAULT_MAX_BLOB_BYTES, RetentionAction,
     RetentionClass, RetentionEvent, RetrievedBlob,
