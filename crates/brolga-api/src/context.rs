@@ -195,6 +195,28 @@ pub async fn context<S: StoreRead>(
 
     let (claims, edges, sightings, entities, graph_version) = gathered;
 
+    // The identity this request is served under. Loopback with no credential is a local operator;
+    // anything else is anonymous until authentication says otherwise. Deriving it here rather than
+    // defaulting to "everything" is the point — an unidentified caller must not out-rank an
+    // authenticated one by saying less.
+    let identity = state.policy_identity();
+
+    // Withheld before anything is summarised, so restricted material never reaches a string that
+    // later gets rendered. Filtering after formatting is how a redaction misses a copy.
+    let (claims, claim_denials) = brolga_config::partition(
+        &identity,
+        &claims,
+        brolga_config::Capability::Read,
+        |claim| &claim.markings,
+    );
+    let (edges, edge_denials) =
+        brolga_config::partition(&identity, &edges, brolga_config::Capability::Read, |edge| {
+            &edge.markings
+        });
+    let claims: Vec<Claim> = claims.into_iter().cloned().collect();
+    let edges: Vec<Relationship> = edges.into_iter().cloned().collect();
+    let withheld = claim_denials.len().saturating_add(edge_denials.len());
+
     let mut evidence: BTreeSet<EvidenceRef> = BTreeSet::new();
     for claim in &claims {
         for source in claim.origin.source_objects() {
@@ -231,6 +253,14 @@ pub async fn context<S: StoreRead>(
 
     let mut exclusions = Vec::new();
     let mut exhausted = false;
+    if withheld > 0 {
+        exclusions.extend(exclusion("claims", ExclusionReason::PolicyRestricted));
+        gaps.extend(gap(
+            "policy",
+            "some records were withheld because their handling markings exceed this caller's \
+             clearance",
+        ));
+    }
     if u32::try_from(claims.len()).unwrap_or(u32::MAX) >= budget {
         exhausted = true;
         exclusions.extend(exclusion("claims", ExclusionReason::BudgetExhausted));
@@ -343,12 +373,12 @@ pub async fn context<S: StoreRead>(
             exhausted,
         },
         policy: PolicyContext {
-            recipient: None,
+            recipient: ShortText::new(&identity.name).ok(),
             // Gathered from the records that reached the pack, so a consumer can see what handling
             // applies without opening every claim. Nothing is withheld yet — that is #37 — and
             // `restricted` says so honestly rather than implying a filter that does not run.
             markings: pack_markings(&claims, &edges),
-            restricted: false,
+            restricted: withheld > 0,
         },
         metadata: PackMetadata {
             generated_at: brolga_model::Timestamp::from_offset_date_time(

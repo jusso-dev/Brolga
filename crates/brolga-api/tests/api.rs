@@ -483,15 +483,28 @@ async fn an_empty_store_answers_with_an_empty_collection() {
 
 /// POST with a JSON body, for the context route.
 async fn post(address: SocketAddr, path: &str, body: &str) -> (u16, String) {
+    post_with_token(address, path, body, None).await
+}
+
+/// The same, carrying a bearer token.
+async fn post_with_token(
+    address: SocketAddr,
+    path: &str,
+    body: &str,
+    token: Option<&str>,
+) -> (u16, String) {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     let mut stream = tokio::net::TcpStream::connect(address)
         .await
         .expect("the server must accept");
 
+    let authorization = token.map_or_else(String::new, |token| {
+        format!("Authorization: Bearer {token}\r\n")
+    });
     let request = format!(
         "POST {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\
-         Content-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+         Content-Type: application/json\r\n{authorization}Content-Length: {}\r\n\r\n{body}",
         body.len()
     );
 
@@ -821,4 +834,124 @@ async fn the_misp_and_stix_paths_land_on_one_observable_for_one_address() {
         "the STIX indicator is missing from the pack, so the two paths derived two \
          observables: {body}"
     );
+}
+
+// ---------------------------------------------------------------------------------------------
+// "Restricted material cannot enter unauthorised pack or expansion" — #37
+// ---------------------------------------------------------------------------------------------
+
+/// A MISP event whose attribute carries TLP:RED, so a pack has something it must withhold.
+const RED_EVENT: &str = r#"{
+  "Event": {
+    "uuid": "77777777-7777-4777-8777-777777777777",
+    "info": "Restricted C2 infrastructure",
+    "Tag": [{"name": "tlp:red"}],
+    "Attribute": [
+      {
+        "uuid": "88888888-8888-4888-8888-888888888888",
+        "type": "ip-dst",
+        "value": "203.0.113.99",
+        "to_ids": true
+      }
+    ]
+  }
+}"#;
+
+/// **The criterion.** A caller who has identified nothing must not receive TLP:RED material, and
+/// must be told that something was withheld rather than served a pack that reads as complete.
+#[tokio::test]
+async fn restricted_material_does_not_reach_an_unauthorised_caller() {
+    let Fixture {
+        _directory,
+        mut store,
+    } = fixture();
+    ingest_document(&mut store, RED_EVENT.as_bytes(), "red.json", false);
+
+    // Bound off-host with a credential, so the identity is `anonymous` rather than a local
+    // operator. That is the path a network consumer takes.
+    let credential = Credential::new(TOKEN).unwrap();
+    let config = ApiConfig::bind("0.0.0.0:0".parse().unwrap(), Some(credential)).unwrap();
+
+    let state = Arc::new(ApiState::new(store, config));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _keep = _directory;
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let (status, body) = post_with_token(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"203.0.113.99"}}"#,
+        Some(TOKEN),
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        !body.contains("misp.ip-dst"),
+        "TLP:RED material reached an unidentified caller: {body}"
+    );
+    assert!(
+        body.contains("\"restricted\":true"),
+        "the pack must say something was withheld: {body}"
+    );
+    assert!(
+        body.contains("policy_restricted"),
+        "and must say why, in a form a consumer can branch on: {body}"
+    );
+}
+
+/// The same store, served to a local operator, does contain it. Without this the test above would
+/// pass just as well if the pack were empty for an unrelated reason.
+#[tokio::test]
+async fn the_same_material_reaches_a_local_operator() {
+    let Fixture {
+        _directory,
+        mut store,
+    } = fixture();
+    ingest_document(&mut store, RED_EVENT.as_bytes(), "red.json", false);
+
+    let state = Arc::new(ApiState::new(store, ApiConfig::loopback(0)));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let _keep = _directory;
+        let _ = axum::serve(listener, router(state)).await;
+    });
+
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"203.0.113.99"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        body.contains("misp.ip-dst"),
+        "a local operator must still see their own data: {body}"
+    );
+    assert!(body.contains("\"restricted\":false"), "{body}");
+}
+
+/// Every pack records the policy context it was produced under, whether or not anything was
+/// withheld. A pack that only mentioned policy when it bit would leave a consumer unable to tell
+/// "nothing was restricted" from "policy did not run".
+#[tokio::test]
+async fn every_pack_records_its_policy_context() {
+    let address = serve_ingested(ApiConfig::loopback(0)).await;
+    let (status, body) = post(
+        address,
+        "/api/v1/context",
+        r#"{"subject":{"kind":"ip","value":"203.0.113.42"}}"#,
+    )
+    .await;
+
+    assert_eq!(status, 200, "{body}");
+    assert!(body.contains("\"policy\":{"), "{body}");
+    assert!(body.contains("\"recipient\":"), "{body}");
+    assert!(body.contains("\"markings\":"), "{body}");
+    assert!(body.contains("\"restricted\":"), "{body}");
 }

@@ -170,6 +170,7 @@ name = "brolga-api"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "brolga-config",
  "brolga-ingest",
  "brolga-model",
  "brolga-security",

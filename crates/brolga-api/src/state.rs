@@ -49,6 +49,24 @@ pub struct ApiState<S> {
 }
 
 impl<S> ApiState<S> {
+    /// The policy identity a request to this server is served under.
+    ///
+    /// A loopback server with no configured credential is a local operator: somebody who can reach
+    /// it can already read the database file, and withholding `TLP:RED` from the holder of the
+    /// SQLite file would be theatre.
+    ///
+    /// **Everything else is anonymous.** A server bound off-host requires a credential to start at
+    /// all, and until authentication resolves that credential to a named identity, the caller is
+    /// treated as having identified nothing. That direction matters: an unidentified caller must
+    /// never out-rank an authenticated one by saying less.
+    #[must_use]
+    pub fn policy_identity(&self) -> brolga_config::PolicyIdentity {
+        if self.config.address().ip().is_loopback() && self.config.credential().is_none() {
+            brolga_config::PolicyIdentity::local_operator()
+        } else {
+            brolga_config::PolicyIdentity::anonymous().in_environment("network")
+        }
+    }
     /// Build the shared state.
     #[must_use]
     pub const fn new(store: S, config: ApiConfig) -> Self {
