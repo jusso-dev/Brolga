@@ -47,6 +47,16 @@ use crate::version::{SchemaTag, VersionedSchema};
 /// Published as data so a consumer can state what it is relying on, rather than trusting a sentence
 /// in documentation that may drift from the code. The
 /// `the_fingerprint_ignores_exactly_the_documented_runtime_fields` test walks this list.
+/// Longest a single field may be at a summary level.
+///
+/// Not a byte budget — that is the budget engine's job. This is the line between "a summary of a
+/// record" and "the record", and it exists so the distinction is enforced rather than intended.
+pub const SUMMARY_FIELD_LIMIT: usize = 2048;
+
+/// The metadata fields deliberately outside the fingerprint's input.
+///
+/// Published as data so a consumer can state what it is relying on, rather than trusting a sentence
+/// in documentation that may drift from the code.
 pub const FINGERPRINT_EXCLUDED: &[&str] = &[
     "generated_at",
     "request_id",
@@ -55,6 +65,17 @@ pub const FINGERPRINT_EXCLUDED: &[&str] = &[
 ];
 
 /// How much of a pack was asked for.
+///
+/// # The levels are a contract, not a hint
+///
+/// `L0` through `L2` are *summaries*: they never carry a raw canonical record or a source object,
+/// however much budget remains. That is the point of asking for one — a consumer requesting `L1`
+/// has decided it does not want to parse records, and a level that sometimes returned them would
+/// make every consumer defensive about a shape it asked not to receive.
+///
+/// `L4` and `L5` are the opposite: `L4` returns complete canonical records and `L5` returns the
+/// exact retained source bytes. Both are reached by *expanding a handle*, not by asking for a
+/// bigger pack — see [`ExpansionHandle`].
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
 )]
@@ -63,7 +84,10 @@ pub const FINGERPRINT_EXCLUDED: &[&str] = &[
 // change for something that reads like a formatting detail.
 #[non_exhaustive]
 pub enum DetailLevel {
-    /// A disposition and its immediate evidence.
+    /// The disposition alone, with its evidence references. Nothing else.
+    #[serde(rename = "L0")]
+    L0,
+    /// A disposition and its immediate findings.
     #[serde(rename = "L1")]
     L1,
     /// Adds related entities and relationships.
@@ -72,22 +96,51 @@ pub enum DetailLevel {
     /// Adds contradictions, clusters, and pivots.
     #[serde(rename = "L3")]
     L3,
+    /// Complete canonical records, reached by expanding a handle.
+    #[serde(rename = "L4")]
+    L4,
+    /// The exact retained source objects, reached by expanding a handle.
+    #[serde(rename = "L5")]
+    L5,
 }
 
 impl DetailLevel {
     /// Every level.
     #[must_use]
     pub const fn all() -> &'static [Self] {
-        &[Self::L1, Self::L2, Self::L3]
+        &[Self::L0, Self::L1, Self::L2, Self::L3, Self::L4, Self::L5]
+    }
+
+    /// Whether this level may carry raw canonical records or source objects.
+    ///
+    /// `false` for `L0` through `L2`. A consumer asking for a summary has decided it does not want
+    /// to parse records, and a level that sometimes returned them would make every consumer
+    /// defensive about a shape it asked not to receive.
+    #[must_use]
+    pub const fn permits_raw_objects(self) -> bool {
+        matches!(self, Self::L3 | Self::L4 | Self::L5)
+    }
+
+    /// Whether this level is reached by expanding a handle rather than by requesting a pack.
+    ///
+    /// `L4` and `L5` return whole records and original bytes. Serving them from an ordinary pack
+    /// request would mean one authorisation decision covering an unbounded amount of source
+    /// material; an expansion is one decision per object, re-checked at the moment it is made.
+    #[must_use]
+    pub const fn requires_expansion(self) -> bool {
+        matches!(self, Self::L4 | Self::L5)
     }
 
     /// The wire discriminator.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::L0 => "L0",
             Self::L1 => "L1",
             Self::L2 => "L2",
             Self::L3 => "L3",
+            Self::L4 => "L4",
+            Self::L5 => "L5",
         }
     }
 }
@@ -451,6 +504,75 @@ pub struct PackGraph {
     pub pivots: Vec<Pivot>,
 }
 
+/// A pointer a consumer can hand back to ask for more about one item.
+///
+/// # Why a handle rather than "just ask for L5"
+///
+/// A pack request is one authorisation decision. If it could return source objects, that decision
+/// would cover an unbounded amount of original material — every byte behind every claim. An
+/// expansion is one decision about one object, made at the moment it is asked for, against the
+/// policy in force *then* rather than whenever the pack was built.
+///
+/// That matters because packs are stored. A pack from last month sitting in a case file must not
+/// be a standing grant to material the caller's authorisation no longer covers, and it is not: the
+/// handle carries no content and no permission, only enough to identify what was being asked about.
+///
+/// # Bound to the graph it was issued against
+///
+/// [`Self::graph_version`] records what the pack saw. An expansion served from a graph that has
+/// moved since is answering about a different state, and a consumer diffing two expansions would
+/// see changes it could not attribute. The handle does not forbid that — it makes it *visible*, so
+/// the decision belongs to whoever is comparing rather than to whoever happened to hold the handle.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ExpansionHandle {
+    /// What can be expanded: a canonical record identifier, or a source object address.
+    pub target: String,
+    /// What kind of thing the target names.
+    pub target_kind: ShortText,
+    /// The deepest level this handle can be expanded to.
+    ///
+    /// Advisory to the *consumer* and not a grant: the server re-checks policy on expansion
+    /// regardless, and a handle claiming `L5` gets whatever the caller is entitled to at that
+    /// moment. Present so a client can avoid a request it knows will be refused, not so it can
+    /// make one it should not.
+    pub max_level: DetailLevel,
+    /// The graph version the issuing pack was built against.
+    pub graph_version: u64,
+    /// When the handle was issued, as RFC 3339.
+    pub issued_at: String,
+}
+
+impl ExpansionHandle {
+    /// Point at something expandable.
+    #[must_use]
+    pub fn new(
+        target: impl Into<String>,
+        target_kind: ShortText,
+        max_level: DetailLevel,
+        graph_version: u64,
+        issued_at: impl Into<String>,
+    ) -> Self {
+        Self {
+            target: target.into(),
+            target_kind,
+            max_level,
+            graph_version,
+            issued_at: issued_at.into(),
+        }
+    }
+
+    /// Whether the graph has moved since this handle was issued.
+    ///
+    /// Not an error by itself. An expansion against a moved graph is a legitimate thing to want —
+    /// it is the current truth about the same object — but a consumer comparing two expansions
+    /// needs to know whether it is comparing content or comparing time.
+    #[must_use]
+    pub const fn is_stale_against(&self, current_graph_version: u64) -> bool {
+        current_graph_version != self.graph_version
+    }
+}
+
 /// The answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -470,6 +592,12 @@ pub struct ContextPack {
     pub disposition: Disposition,
     /// The graph around the subject.
     pub graph: PackGraph,
+    /// Handles for expanding individual items to their canonical records or original bytes.
+    ///
+    /// Always serialised, empty or not. An absent array would read as "nothing can be expanded",
+    /// which is a different statement from "this level issues no handles".
+    #[serde(default)]
+    pub handles: Vec<ExpansionHandle>,
     /// What the pack asserts. Each carries its own evidence.
     pub findings: Vec<Finding>,
     /// What the pack suggests. Each carries its own evidence.
@@ -488,6 +616,9 @@ pub struct ContextPack {
 
 impl VersionedSchema for ContextPack {
     const SCHEMA_NAME: &'static str = "brolga.context_pack";
+    // Bumped for `handles` and for the `L0`/`L4`/`L5` detail levels. Both are additive: an optional
+    // field with a default, and variants on a `#[non_exhaustive]` enum.
+    const SCHEMA_MINOR: u16 = 1;
 }
 
 impl ContextPack {
@@ -550,6 +681,38 @@ impl ContextPack {
                 "ContextPack",
                 "the pack reports an exhausted budget but lists no budget exclusion saying what \
                  was dropped",
+            ));
+        }
+
+        // A summary level must stay a summary. A consumer that asked for `L1` because it does not
+        // want to parse records should never have to defend against receiving them.
+        if !self.detail_level.permits_raw_objects() && !self.graph.claims.is_empty() {
+            for claim in &self.graph.claims {
+                if claim.object.as_str().len() > SUMMARY_FIELD_LIMIT {
+                    return Err(ModelError::invalid(
+                        "ContextPack",
+                        format_args!(
+                            "`{}` is a summary level but carries a {}-byte claim value; summary \
+                             levels never carry raw record content",
+                            self.detail_level,
+                            claim.object.as_str().len()
+                        ),
+                    ));
+                }
+            }
+        }
+
+        // `L4` and `L5` are reached by expanding a handle, not by asking for a bigger pack. A pack
+        // claiming to *be* one would mean a single authorisation decision covering unbounded
+        // source material.
+        if self.detail_level.requires_expansion() {
+            return Err(ModelError::invalid(
+                "ContextPack",
+                format_args!(
+                    "`{}` is reached by expanding a handle rather than by serving a pack at that \
+                     level",
+                    self.detail_level
+                ),
             ));
         }
 
@@ -631,6 +794,8 @@ impl<'de> Deserialize<'de> for ContextPack {
             detail_level: DetailLevel,
             disposition: Disposition,
             graph: PackGraph,
+            #[serde(default)]
+            handles: Vec<ExpansionHandle>,
             findings: Vec<Finding>,
             recommendations: Vec<Recommendation>,
             gaps: Vec<Gap>,
@@ -651,6 +816,7 @@ impl<'de> Deserialize<'de> for ContextPack {
             detail_level: raw.detail_level,
             disposition: raw.disposition,
             graph: raw.graph,
+            handles: raw.handles,
             findings: raw.findings,
             recommendations: raw.recommendations,
             gaps: raw.gaps,
@@ -707,6 +873,7 @@ mod tests {
             detail_level: DetailLevel::L1,
             disposition: Disposition::Malicious,
             graph: PackGraph::default(),
+            handles: Vec::new(),
             findings: vec![Finding {
                 kind: short("disposition"),
                 statement: untrusted("Published as a C2 address."),
@@ -862,6 +1029,118 @@ mod tests {
         assert_eq!(back, original);
     }
 
+    /// **The criterion.** A consumer that asked for a summary should never have to defend against
+    /// receiving records it asked not to receive.
+    #[test]
+    fn a_summary_level_never_carries_raw_record_content() {
+        for level in [DetailLevel::L0, DetailLevel::L1, DetailLevel::L2] {
+            assert!(!level.permits_raw_objects(), "{level}");
+
+            let mut bulky = pack();
+            bulky.detail_level = level;
+            bulky.graph.claims.push(ClaimSummary {
+                predicate: short("raw"),
+                object: untrusted(&"x".repeat(SUMMARY_FIELD_LIMIT + 1)),
+                status: short("active"),
+                confidence: None,
+                evidence: vec![EvidenceRef::new("sha256:abc")],
+            });
+
+            let error = bulky.validated().unwrap_err();
+            assert!(error.to_string().contains("summary level"), "{error}");
+        }
+
+        assert!(DetailLevel::L3.permits_raw_objects());
+    }
+
+    /// **The criterion.** `L4` and `L5` are reached by expanding a handle. Serving them as a pack
+    /// would make one authorisation decision cover an unbounded amount of source material.
+    #[test]
+    fn the_expansion_levels_cannot_be_served_as_a_pack() {
+        for level in [DetailLevel::L4, DetailLevel::L5] {
+            assert!(level.requires_expansion(), "{level}");
+
+            let mut deep = pack();
+            deep.detail_level = level;
+            let error = deep.validated().unwrap_err();
+            assert!(error.to_string().contains("expanding a handle"), "{error}");
+        }
+
+        for level in [
+            DetailLevel::L0,
+            DetailLevel::L1,
+            DetailLevel::L2,
+            DetailLevel::L3,
+        ] {
+            assert!(!level.requires_expansion(), "{level}");
+        }
+    }
+
+    /// A handle carries no content and no permission — only enough to identify what was asked
+    /// about. A stored pack must not be a standing grant to material the caller's authorisation no
+    /// longer covers.
+    #[test]
+    fn a_handle_carries_no_content_and_no_permission() {
+        let handle = ExpansionHandle::new(
+            "claim-1",
+            short("claim"),
+            DetailLevel::L5,
+            7,
+            "2024-01-01T00:00:00Z",
+        );
+
+        let json = serde_json::to_value(&handle).unwrap();
+        let object = json.as_object().unwrap();
+        let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
+        keys.sort_unstable();
+        assert_eq!(
+            keys,
+            vec![
+                "graph_version",
+                "issued_at",
+                "max_level",
+                "target",
+                "target_kind"
+            ],
+            "a handle must not gain a field that could carry content or a grant"
+        );
+    }
+
+    /// An expansion against a moved graph is legitimate, but a consumer diffing two of them needs
+    /// to know whether it is comparing content or comparing time.
+    #[test]
+    fn a_handle_reports_whether_the_graph_has_moved_since_it_was_issued() {
+        let handle = ExpansionHandle::new(
+            "claim-1",
+            short("claim"),
+            DetailLevel::L4,
+            7,
+            "2024-01-01T00:00:00Z",
+        );
+
+        assert!(!handle.is_stale_against(7));
+        assert!(handle.is_stale_against(8));
+    }
+
+    /// Handles ride inside the fingerprint: a pack offering different expansions is a different
+    /// answer.
+    #[test]
+    fn handles_are_part_of_what_a_pack_says() {
+        let plain = pack();
+
+        let mut offered = pack();
+        offered.handles.push(ExpansionHandle::new(
+            "claim-1",
+            short("claim"),
+            DetailLevel::L4,
+            7,
+            "2024-01-01T00:00:00Z",
+        ));
+        let offered = offered.validated().unwrap();
+
+        assert_ne!(plain.fingerprint, offered.fingerprint);
+    }
+
     /// A pack edited in transit must not deserialise. A consumer caching on the fingerprint would
     /// otherwise cache the wrong contents under the right key.
     #[test]
@@ -915,7 +1194,7 @@ mod tests {
         assert_eq!(json["exclusions"], serde_json::json!([]));
         assert_eq!(
             json["schema_version"],
-            serde_json::json!("brolga.context_pack/1.0")
+            serde_json::json!("brolga.context_pack/1.1")
         );
     }
 }
@@ -931,10 +1210,15 @@ mod all_variants_tests {
     fn every_variant_appears_in_all() {
         for level in DetailLevel::all() {
             match level {
-                DetailLevel::L1 | DetailLevel::L2 | DetailLevel::L3 => {}
+                DetailLevel::L0
+                | DetailLevel::L1
+                | DetailLevel::L2
+                | DetailLevel::L3
+                | DetailLevel::L4
+                | DetailLevel::L5 => {}
             }
         }
-        assert_eq!(DetailLevel::all().len(), 3);
+        assert_eq!(DetailLevel::all().len(), 6);
 
         for reason in ExclusionReason::all() {
             match reason {

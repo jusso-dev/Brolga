@@ -544,7 +544,7 @@ async fn the_pack_carries_the_agreed_schema_id() {
 
     assert_eq!(status, 200, "{body}");
     assert!(
-        body.contains("\"schema_version\":\"brolga.context_pack/1.0\""),
+        body.contains("\"schema_version\":\"brolga.context_pack/1.1\""),
         "{body}"
     );
 }
