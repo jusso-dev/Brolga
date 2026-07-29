@@ -45,6 +45,11 @@ fn row(decision: &brolga_graph::DedupDecision) -> GraphDecisionRow {
         algorithm_version: decision.algorithm_version,
         reason: decision.reason.to_owned(),
         decided_at: String::new(),
+        // Derived by an algorithm, so there is no actor. Left as None deliberately:
+        // a placeholder that looks like an actor would make an unattributed decision
+        // indistinguishable from an attributed one.
+        actor: None,
+        policy_context: None,
     }
 }
 
@@ -456,6 +461,11 @@ fn decision_identity_ignores_the_verdict_the_reason_and_the_clock() {
         algorithm_version: 1,
         reason: "first wording".to_owned(),
         decided_at: "2026-01-01T00:00:00Z".to_owned(),
+        // Derived by an algorithm, so there is no actor. Left as None deliberately:
+        // a placeholder that looks like an actor would make an unattributed decision
+        // indistinguishable from an attributed one.
+        actor: None,
+        policy_context: None,
     };
 
     let mut different = base.clone();

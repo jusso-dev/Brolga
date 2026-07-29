@@ -111,6 +111,11 @@ fn contradiction_row(decision: &ContradictionDecision) -> GraphDecisionRow {
         algorithm_version: decision.algorithm_version,
         reason: decision.reason.to_owned(),
         decided_at: "2026-07-29T00:00:00Z".to_owned(),
+        // Derived by an algorithm, so there is no actor. Left as None deliberately:
+        // a placeholder that looks like an actor would make an unattributed decision
+        // indistinguishable from an attributed one.
+        actor: None,
+        policy_context: None,
     }
 }
 
@@ -139,27 +144,38 @@ fn confidence_row(assessment: &ConfidenceAssessment) -> GraphDecisionRow {
         algorithm_version: assessment.algorithm_version,
         reason: reason.join("; "),
         decided_at: "2026-07-29T00:00:00Z".to_owned(),
+        // Derived by an algorithm, so there is no actor. Left as None deliberately:
+        // a placeholder that looks like an actor would make an unattributed decision
+        // indistinguishable from an attributed one.
+        actor: None,
+        policy_context: None,
     }
 }
 
 /// An analyst override as its own stored row.
 ///
 /// A separate row rather than a column on the confidence row, because the criterion is that the
-/// override is recorded *separately from source claims*. The actor identifies it, so two analysts
-/// overriding one claim are two rows rather than one overwriting the other, and `compared_with`
-/// carries what the sources supported so the row reads without needing the assessment.
+/// override is recorded *separately from source claims*. The actor participates in the row's
+/// identity, so two analysts overriding one claim are two rows rather than one silently
+/// overwriting the other.
 fn override_row(assessment: &ConfidenceAssessment) -> GraphDecisionRow {
     let recorded = assessment.analyst_override.as_ref().unwrap();
     GraphDecisionRow {
         kind: "confidence_override".to_owned(),
         subject: assessment.subject.clone(),
-        observation: recorded.actor.clone(),
-        compared_with: Some(assessment.derived.overall.to_string()),
+        // The derived figure this override replaces, so the row reads without needing the
+        // assessment. The actor and the authority go in the columns named for them — putting a
+        // human identity in `observation` would make a query on that column return a mixture of
+        // source-object identifiers and analyst names.
+        observation: assessment.derived.overall.to_string(),
+        compared_with: None,
         verdict: recorded.score.to_string(),
         algorithm: assessment.algorithm.to_owned(),
         algorithm_version: assessment.algorithm_version,
         reason: "an operator asserted a figure over what the sources support".to_owned(),
         decided_at: "2026-07-29T00:00:00Z".to_owned(),
+        actor: Some(recorded.actor.clone()),
+        policy_context: Some(recorded.policy_context.clone()),
     }
 }
 
@@ -593,13 +609,27 @@ fn overrides_persist_as_their_own_rows_beside_the_derived_figure() {
 
     assert_eq!(figures.len(), 1, "one derived figure");
     assert_eq!(overrides.len(), 2, "two analysts, two records");
-    assert_eq!(overrides[0].observation, "analyst@example.org");
-    assert_eq!(overrides[1].observation, "lead@example.org");
-    assert_eq!(
-        overrides[0].compared_with.as_deref(),
-        Some(assessment.derived.overall.to_string().as_str()),
-        "the row says what the sources supported"
-    );
+
+    // The actor participates in the row's identity, so a second analyst overriding the same claim
+    // appends rather than silently replacing the first. Read from the column named for it.
+    let actors: Vec<_> = overrides
+        .iter()
+        .filter_map(|row| row.actor.as_deref())
+        .collect();
+    assert!(actors.contains(&"analyst@example.org"), "{actors:?}");
+    assert!(actors.contains(&"lead@example.org"), "{actors:?}");
+
+    for row in &overrides {
+        assert!(
+            row.policy_context.is_some(),
+            "an override records under what authority it was made"
+        );
+        assert_eq!(
+            row.observation,
+            assessment.derived.overall.to_string(),
+            "the row says what the sources supported, so it reads without the assessment"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
