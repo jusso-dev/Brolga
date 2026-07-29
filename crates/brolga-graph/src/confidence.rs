@@ -36,13 +36,30 @@
 //! the assessment says [`ConfidenceMethod::Unknown`] rather than asserting a number it cannot
 //! defend.
 //!
+//! # Recency is not this module's opinion
+//!
+//! This module once carried its own banded step function over an observation's age, and its
+//! documentation said [#23](https://github.com/jusso-dev/Brolga/issues/23) would take that over. It
+//! has. The recency component is now the standing that [`crate::decay`] computes, under the
+//! [`DecayPolicy`] carried in [`ConfidencePolicy::decay`], and
+//! [`ConfidencePolicy::recency_score`] is a delegation rather than a second answer. Two notions of
+//! freshness would drift the first time somebody tuned one of them, and an analyst comparing a
+//! ranked list against a confidence figure would be comparing two different opinions about the same
+//! day.
+//!
+//! What stays here is the *weight* recency carries against the other four components. How fast a
+//! kind of artefact stops being the thing that was observed is a temporal question and lives there;
+//! how much that costs a confidence figure is a composition question and lives here.
+//!
 //! # Configuration is versioned, because changing it changes the answer
 //!
-//! Every weight, band, ladder rung, and penalty lives in [`ConfidencePolicy`], which produces a
-//! [`ConfidencePolicy::digest`]. Each assessment records the digest that produced it, so
-//! [`ConfidenceAssessment::needs_recalculation`] can tell a figure computed under today's
-//! configuration from one computed under last month's. Without that, a weight change would leave
-//! two incomparable figures in the database with nothing to distinguish them.
+//! Every weight, curve, ladder rung, and penalty lives in [`ConfidencePolicy`], which produces a
+//! [`ConfidencePolicy::digest`] — and that digest covers the decay policy's digest too, so a
+//! half-life change makes stored figures stale exactly as a weight change does. Each assessment
+//! records the digest that produced it, so [`ConfidenceAssessment::needs_recalculation`] can tell a
+//! figure computed under today's configuration from one computed under last month's. Without that,
+//! a weight change would leave two incomparable figures in the database with nothing to distinguish
+//! them.
 
 use std::collections::BTreeMap;
 
@@ -51,6 +68,7 @@ use brolga_model::{
 };
 
 use crate::contradiction::{ClaimStance, ContradictionDecision};
+use crate::decay::{DecayPolicy, age_in_days};
 use crate::dedup::{DedupVerdict, RecordLineage};
 
 /// This algorithm's identifier, stamped into every assessment it produces.
@@ -64,7 +82,12 @@ pub const CONFIDENCE_ALGORITHM: &str = "brolga.confidence.weighted-components";
 /// Bump when the *composition* changes — a new component, a different penalty order, a changed
 /// treatment of unknowns. Changing a weight is a policy change, not an algorithm change, and is
 /// carried by [`ConfidencePolicy::digest`] instead.
-pub const CONFIDENCE_ALGORITHM_VERSION: u32 = 1;
+///
+/// `2` because the recency component stopped being a band of this module's own and became the
+/// standing [`crate::decay`] computes. Where a component's *value comes from* is composition, not
+/// configuration: a figure computed under version 1 was scored against a different question, and
+/// the digest alone would not have said so.
+pub const CONFIDENCE_ALGORITHM_VERSION: u32 = 2;
 
 /// The component name for a source's track record.
 pub const COMPONENT_SOURCE_RELIABILITY: &str = "source_reliability";
@@ -143,14 +166,12 @@ pub struct ConfidencePolicy {
     /// in the open. Counts beyond the last rung take the last rung: corroboration saturates, so a
     /// widely mirrored indicator cannot climb past a genuinely well-attested one.
     pub corroboration_ladder: Vec<u8>,
-    /// Age in whole days to the score for anything no older, ascending.
+    /// How a record's standing falls with age.
     ///
-    /// A step function, not a curve. A step is explainable to the analyst it affects — "this is 91
-    /// days old, which is the band below 60" — and a curve is not. Longer-run decay of a record's
-    /// standing is [#23](https://github.com/jusso-dev/Brolga/issues/23) and is not this.
-    pub freshness_bands: BTreeMap<u32, u8>,
-    /// The score for anything older than every band.
-    pub stale_score: u8,
+    /// The whole of the recency question, delegated. This module used to keep a band table of its
+    /// own beside it; two notions of freshness in one crate is one too many, and the decay policy
+    /// is the versioned, per-kind, floored one.
+    pub decay: DecayPolicy,
     /// The score for each way a claim may have come to be held.
     pub stance_scores: BTreeMap<ClaimStance, u8>,
     /// Points deducted when an unresolved contradiction stands against the claim.
@@ -175,8 +196,7 @@ impl ConfidencePolicy {
             // Nought parties is not evidence; one is a single voice; the gain from the second is
             // the largest because it is the first that could have disagreed and did not.
             corroboration_ladder: vec![0, 25, 60, 80, 90, 100],
-            freshness_bands: BTreeMap::from([(7, 100), (30, 85), (90, 60), (365, 30)]),
-            stale_score: 10,
+            decay: DecayPolicy::defaults(),
             stance_scores: BTreeMap::from([
                 (ClaimStance::Observed, 100),
                 // An analyst of this instance is trusted, but an operator's own note is not
@@ -204,15 +224,14 @@ impl ConfidencePolicy {
             .unwrap_or(0)
     }
 
-    /// The score for an observation of a given age in whole days.
+    /// The score for an observation of a given kind and age in whole days.
     ///
-    /// The first band no smaller than the age wins; anything older than every band is stale.
+    /// A delegation, deliberately. The curve, the per-kind half-lives, the floors, and the
+    /// exemptions all belong to [`crate::decay`], and a second implementation here — however
+    /// small — would be a second answer to "how old is too old" that nothing would keep in step.
     #[must_use]
-    pub fn freshness_score(&self, age_in_days: u32) -> u8 {
-        self.freshness_bands
-            .iter()
-            .find(|(limit, _)| **limit >= age_in_days)
-            .map_or(self.stale_score, |(_, score)| *score)
+    pub fn recency_score(&self, kind: Option<&str>, age_in_days: u32) -> u8 {
+        self.decay.standing_after(kind, age_in_days)
     }
 
     /// The score for a stance, where the policy gives one.
@@ -229,23 +248,21 @@ impl ConfidencePolicy {
     #[must_use]
     pub fn digest(&self) -> ContentHash {
         let mut material = format!(
-            "brolga.confidence.policy/1\nrevision={}\nweights={},{},{},{},{}\nstale={}\npenalties={},{}\nladder=",
+            "brolga.confidence.policy/2\nrevision={}\nweights={},{},{},{},{}\ndecay={}\npenalties={},{}\nladder=",
             self.revision,
             self.weights.source_reliability,
             self.weights.information_credibility,
             self.weights.corroboration,
             self.weights.recency,
             self.weights.stance,
-            self.stale_score,
+            // The decay policy's own digest rather than its fields, so a change there makes stored
+            // confidence figures stale without this function having to know its shape.
+            self.decay.digest(),
             self.contradiction_penalty,
             self.withdrawn_penalty,
         );
         for rung in &self.corroboration_ladder {
             material.push_str(&format!("{rung},"));
-        }
-        material.push_str("\nbands=");
-        for (limit, score) in &self.freshness_bands {
-            material.push_str(&format!("{limit}:{score},"));
         }
         material.push_str("\nstances=");
         for (stance, score) in &self.stance_scores {
@@ -402,6 +419,11 @@ impl AnalystOverride {
 pub struct ScoringInputs {
     /// What is being scored, as a stable rendering — normally a claim identifier.
     pub subject: String,
+    /// The kind of subject, which selects the decay profile. `None` takes the default profile.
+    ///
+    /// An address and a file digest do not stop being what was observed at the same rate, and a
+    /// single curve for both would be wrong for one of them.
+    pub kind: Option<String>,
     /// The source's track record, where it is known. `None` means unknown, never zero.
     pub source_reliability: Option<ConfidenceScore>,
     /// This report's credibility, where it is known. `None` means unknown, never zero.
@@ -435,6 +457,7 @@ impl ScoringInputs {
     pub fn unknown(subject: &str, now: Timestamp, stance: ClaimStance) -> Self {
         Self {
             subject: bounded(subject),
+            kind: None,
             source_reliability: None,
             information_credibility: None,
             corroboration: None,
@@ -656,14 +679,27 @@ impl ConfidenceScorer {
         }
 
         if let Some(observed_at) = inputs.observed_at {
+            let kind = inputs.kind.as_deref();
             let age = age_in_days(observed_at, inputs.now);
+            let profile = self.policy.decay.profile_for(kind);
             components.push(ScoreComponent {
                 component: COMPONENT_RECENCY,
-                score: score_of(self.policy.freshness_score(age)),
+                score: score_of(self.policy.recency_score(kind, age)),
                 weight: self.policy.weights.recency,
-                reason: "how current the underlying observation is, taken from the freshness band \
-                         the observation's age falls in",
-                evidence: Some(bounded(&format!("{age} days old"))),
+                reason: if profile.never_decays() {
+                    "how current the underlying observation is; policy exempts this kind from \
+                     decay, because age is only evidence where the thing observed can stop being \
+                     the thing observed"
+                } else {
+                    "how current the underlying observation is, taken from the decay curve for \
+                     this kind of record: one half-life halves what remains, and it never falls \
+                     below the policy's floor"
+                },
+                evidence: Some(bounded(&format!(
+                    "{age} days old, half-life {} days, floor {}",
+                    profile.half_life_days(),
+                    profile.floor(),
+                ))),
             });
         }
 
@@ -799,19 +835,6 @@ const fn withdrawal_reason(status: LifecycleStatus) -> Option<&'static str> {
     }
 }
 
-/// Whole days between an observation and now.
-///
-/// Clamped at zero: a source-supplied timestamp in the future is a data error, and treating it as
-/// negative age would make the claim fresher than one observed this morning.
-fn age_in_days(observed_at: Timestamp, now: Timestamp) -> u32 {
-    let seconds = now
-        .unix_timestamp()
-        .saturating_sub(observed_at.unix_timestamp())
-        .max(0);
-    let days = seconds.checked_div(86_400).unwrap_or(0);
-    u32::try_from(days).unwrap_or(u32::MAX)
-}
-
 /// Build a score from a value already bounded to `0..=100`.
 ///
 /// Written as a clamp rather than an unwrap because this crate does not panic on arithmetic: every
@@ -923,17 +946,34 @@ mod tests {
         assert_eq!(policy.corroboration_score(0), 0);
     }
 
-    /// A freshness band is a step function, and the boundary must fall on the documented side.
+    /// Recency must be the decay module's answer, not a second one kept here. If this ever
+    /// diverges, an analyst comparing a ranked list against a confidence figure is comparing two
+    /// different opinions about the same day.
     #[test]
-    fn a_freshness_band_includes_its_own_boundary() {
+    fn the_recency_component_is_the_decay_policys_answer_and_not_a_second_one() {
         let policy = ConfidencePolicy::defaults();
-        assert_eq!(policy.freshness_score(7), 100);
-        assert_eq!(policy.freshness_score(8), 85);
-        assert_eq!(policy.freshness_score(10_000), policy.stale_score);
+        for (kind, age) in [
+            (None, 0),
+            (None, 45),
+            (Some("domain_name"), 45),
+            (Some("ipv4_address"), 200),
+            (Some("file_hash"), 10_000),
+        ] {
+            assert_eq!(
+                policy.recency_score(kind, age),
+                policy.decay.standing_after(kind, age),
+                "{kind:?} at {age} days"
+            );
+        }
+
+        // A kind the operator exempted does not age, and one that decays never reaches nought.
+        assert_eq!(policy.recency_score(Some("file_hash"), 10_000), 100);
+        assert!(policy.recency_score(Some("ipv4_address"), 100_000) > 0);
     }
 
     /// A timestamp in the future is a data error, and must not make a claim fresher than one
-    /// observed this morning.
+    /// observed this morning. Whether such a timestamp is believed at all is
+    /// [`crate::decay::FutureDating`]'s decision, not this module's.
     #[test]
     fn an_observation_dated_in_the_future_is_treated_as_no_age_at_all() {
         let future = Timestamp::parse_rfc3339("2030-01-01T00:00:00Z").unwrap();
@@ -958,6 +998,12 @@ mod tests {
         let mut repenalised = ConfidencePolicy::defaults();
         repenalised.contradiction_penalty = 5;
         assert_ne!(base.digest(), repenalised.digest());
+
+        // The decay policy is part of this configuration now, so retuning a half-life must make
+        // stored confidence figures stale exactly as retuning a weight does.
+        let mut re_decayed = ConfidencePolicy::defaults();
+        re_decayed.decay = DecayPolicy::defaults().with_revision(2);
+        assert_ne!(base.digest(), re_decayed.digest());
     }
 
     /// An override must name who made it and under what authority, or it is indistinguishable from

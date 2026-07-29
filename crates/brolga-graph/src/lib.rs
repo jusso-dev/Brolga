@@ -34,11 +34,17 @@
 //!   traversal over a graph an attacker can publish into is a denial of service, so every walk is
 //!   held to a depth, node, edge, and fan-out budget plus the request's cancellation token, and says
 //!   which one stopped it.
+//! - [`decay`] — how a record's standing falls with age, under a versioned policy, at an evaluation
+//!   instant the caller names. It owns freshness outright: [`confidence`] delegates its recency
+//!   component here rather than keeping a second opinion about what "old" means. Nothing decays to
+//!   nought, because an indicator that has aged out was observed by somebody and one that was never
+//!   asserted was not.
 
 #![forbid(unsafe_code)]
 
 pub mod confidence;
 pub mod contradiction;
+pub mod decay;
 pub mod dedup;
 pub mod resolve;
 pub mod traverse;
@@ -53,6 +59,11 @@ pub use contradiction::{
     CONTRADICTION_ALGORITHM, CONTRADICTION_ALGORITHM_VERSION, ClaimRelation, ClaimStance,
     ContradictionDecision, ContradictionDetector, ContradictionReport, ContradictionRules,
     Predicate, ReviewedClaim,
+};
+pub use decay::{
+    DECAY_ALGORITHM, DECAY_ALGORITHM_VERSION, DecayAnchor, DecayAssessment, DecayEvaluator,
+    DecayInputs, DecayLedger, DecayPolicy, DecayProfile, DecayState, FutureDating, RecordTimeline,
+    SourceInstant, StateTransition, age_in_days,
 };
 pub use dedup::{
     DEDUP_ALGORITHM, DEDUP_ALGORITHM_VERSION, DedupDecision, DedupVerdict, Deduplicator,
