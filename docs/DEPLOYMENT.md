@@ -135,6 +135,22 @@ XML documents carrying a `<!DOCTYPE>` are refused outright rather than parsed wi
 turned off. A DTD is what entity-expansion and external-entity attacks need, and no legitimate
 OpenIOC, IODEF, or CVRF document has one.
 
+### A format Brolga has no parser for
+
+`brolga ingest <file> --mapping <mapping.yml>` reads a structured format through a declarative
+mapping. A mapping is data rather than code: paths that select values, and transforms from a closed
+list of named string operations. It cannot branch, loop, call anything, run a shell command, read a
+file, open a network connection, or name a transform the build does not have — a mapping naming one
+fails to load, before a byte of feed data is read.
+
+`brolga mapping validate` checks one; `brolga mapping explain` prints what it will do **and what the
+engine refuses to do whatever the mapping says**, which is what to read first when the mapping came
+from somewhere else. Worked examples are in `examples/mappings/`.
+
+`--mapping` makes that mapping the only parser for the batch, so a mixed batch is two invocations.
+See [the CLI reference](CLI.md#brolga-mapping) for why that is a precedence decision rather than an
+oversight.
+
 Drop files into the `feeds/` directory next to `docker-compose.yml`. It is bind-mounted at
 `/feeds` **read-only**, because Brolga only ever reads them and a writable mount would let a bug
 in an import path damage your own copy of the evidence.

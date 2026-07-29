@@ -229,6 +229,138 @@ fn the_demo_touches_nothing_outside_the_machine() {
     }
 }
 
+/// **The mapping journey.** Validate a shipped example, explain it, ingest through it, and reach the
+/// result — over the real binary, against the mappings the repository ships.
+///
+/// One test rather than four: a mapping that validates but cannot ingest, or ingests but produces
+/// nothing a lookup can reach, has not done the job. The chain is the unit.
+#[test]
+fn the_declarative_mapping_journey_runs_end_to_end() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let database = directory.path().join("brolga.sqlite");
+    let database = database.to_str().expect("a usable path");
+
+    let mapping =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mappings/acme-json.yml");
+    let mapping = mapping.to_str().expect("a usable path");
+    let feed = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../brolga-ingest/tests/fixtures/mapping/acme-feed.json");
+    let feed = feed.to_str().expect("a usable path");
+
+    // 1. Validate. A mapping that fails here would otherwise fail partway through a document.
+    let validate = brolga(&["mapping", "validate", mapping]);
+    assert_eq!(code(&validate), 0, "{}", stderr(&validate));
+    assert!(
+        stdout(&validate).contains("is valid"),
+        "{}",
+        stdout(&validate)
+    );
+
+    // 2. Explain. The refusals are part of the output, not a footnote.
+    let explain = brolga(&["mapping", "explain", mapping]);
+    assert_eq!(code(&explain), 0, "{}", stderr(&explain));
+    let explained = stdout(&explain);
+    assert!(explained.contains("subject"), "{explained}");
+    assert!(
+        explained.contains("this engine will not"),
+        "an operator evaluating a mapping from elsewhere needs the refusals: {explained}"
+    );
+
+    // 3. Ingest through it.
+    let ingest = brolga(&[
+        "ingest",
+        feed,
+        "--mapping",
+        mapping,
+        "--mode",
+        "permissive",
+        "--database",
+        database,
+    ]);
+    assert_eq!(code(&ingest), 0, "{}", stderr(&ingest));
+    assert!(stdout(&ingest).contains("accepted"), "{}", stdout(&ingest));
+
+    // 4. The mapped indicator is reachable, with the disposition the mapping derived from a
+    //    vendor-specific verdict column — which is the whole point of the feature.
+    let context = brolga(&[
+        "--output",
+        "json",
+        "context",
+        "url",
+        "http://evil.example.com/payload",
+        "--database",
+        database,
+    ]);
+    assert_eq!(code(&context), 0, "{}", stderr(&context));
+    let pack: serde_json::Value = serde_json::from_str(&stdout(&context)).expect("a JSON pack");
+    assert_eq!(
+        pack["disposition"], "malicious",
+        "the mapping's disposition column must reach a context lookup: {pack}"
+    );
+    assert!(
+        !pack["findings"].as_array().unwrap().is_empty(),
+        "the answer must cite the evidence behind it: {pack}"
+    );
+}
+
+/// A mapping pointed at the wrong kind of file fails loudly rather than importing nothing
+/// successfully — which is the failure an operator is least likely to notice.
+#[test]
+fn a_mapping_pointed_at_the_wrong_shape_fails_rather_than_importing_nothing() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let database = directory.path().join("brolga.sqlite");
+
+    let xml_mapping =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mappings/device-xml.yml");
+    let json_feed = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../brolga-ingest/tests/fixtures/mapping/acme-feed.json");
+
+    let ingest = brolga(&[
+        "ingest",
+        json_feed.to_str().unwrap(),
+        "--mapping",
+        xml_mapping.to_str().unwrap(),
+        "--mode",
+        "permissive",
+        "--database",
+        database.to_str().unwrap(),
+    ]);
+    assert_ne!(code(&ingest), 0, "{}", stdout(&ingest));
+    assert!(
+        stderr(&ingest).contains("not the shape") || stdout(&ingest).contains("not the shape"),
+        "the reason must name the mismatch: {} / {}",
+        stdout(&ingest),
+        stderr(&ingest)
+    );
+}
+
+/// An invalid mapping is a configuration error, not a usage error. A script has to be able to tell
+/// "I called this wrongly" from "the operator's mapping is broken".
+#[test]
+fn an_invalid_mapping_exits_as_a_configuration_error() {
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let path = directory.path().join("broken.yml");
+    std::fs::write(
+        &path,
+        "schema_version: brolga.mapping/1.0\nid: broken\nsource: json\nrecords: $..value\n\
+         fields:\n  - path: v\n    target:\n      type: infer\n    subject: true\n",
+    )
+    .expect("write the mapping");
+
+    let validate = brolga(&["mapping", "validate", path.to_str().unwrap()]);
+    assert_eq!(
+        code(&validate),
+        3,
+        "an invalid mapping is a configuration error: {}",
+        stderr(&validate)
+    );
+    assert!(
+        stderr(&validate).contains("recursive descent"),
+        "the refusal must name the construct: {}",
+        stderr(&validate)
+    );
+}
+
 /// The README must say what Brolga cannot do, not only what it can.
 ///
 /// A capability table that lists only what works reads as a claim that everything else works too,

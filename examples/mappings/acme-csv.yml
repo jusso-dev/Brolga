@@ -1,0 +1,49 @@
+# The same feed as a CSV export. One row is one record, so there is no `records` path.
+
+schema_version: brolga.mapping/1.0
+id: acme-indicator-csv
+version: 1
+description: ACME's indicator export as delimited text, with a quoted notes column.
+
+source: csv
+delimiter: ","
+
+filters:
+  - path: indicator
+    op: present
+
+fields:
+  - path: indicator
+    target:
+      type: infer
+    transforms:
+      - op: trim
+      - op: undefang
+    subject: true
+
+  - path: malicious
+    target:
+      type: disposition
+
+  - path: score
+    target:
+      type: attribute
+      name: acme.confidence
+
+  # `host:port` in one column. `split_take` names the separator and the part, so a reader does not
+  # have to count arguments.
+  - path: endpoint
+    target:
+      type: attribute
+      name: acme.endpoint_host
+    transforms:
+      - op: split_take
+        separator: ":"
+        index: 0
+
+  - path: notes
+    target:
+      type: attribute
+      name: acme.notes
+    transforms:
+      - op: collapse_whitespace

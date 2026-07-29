@@ -22,6 +22,7 @@ use std::path::Path;
 use brolga_ingest::formats::{
     csaf, delimited, kev, misp, nvd, osv, sarif, sbom, sigma, stix, telemetry, xml, yara,
 };
+use brolga_ingest::mapping::{MappedParser, Mapping};
 use brolga_ingest::{
     Document, DocumentReport, IngestError, IngestMode, IngestReport, ParserRegistry, Pipeline,
 };
@@ -82,7 +83,49 @@ pub(crate) fn ingest<Out: Write, Err: Write>(
         Mode::Permissive => IngestMode::Permissive,
     };
 
-    let mut pipeline = Pipeline::new(registry(), ResourceLimits::defaults()).in_mode(mode);
+    // `--mapping` means "read these files with this mapping", so the mapping is the *only* parser
+    // registered.
+    //
+    // Registering it alongside the compiled parsers was the first design, and it does not work: the
+    // registry resolves a tie below `Certain` by parser identifier, and the permissive flat JSON and
+    // delimited readers claim `Strong` on anything JSON-shaped or comma-shaped. So a mapping would
+    // lose to `brolga.flat.json` on an alphabetical accident, which is the worst possible way to
+    // decide — the operator named a mapping and silently got a generic reader.
+    //
+    // A mixed batch is therefore two invocations, which is legible. What detection still buys is the
+    // shape check: a mapping pointed at the wrong kind of file declines and the ingest fails loudly,
+    // rather than running paths that cannot match and reporting a successful import of nothing.
+    let mut parsers = registry();
+    if let Some(path) = &args.mapping {
+        parsers = ParserRegistry::new();
+        let bytes = match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let _ = streams.problem(&format!("cannot read {}: {error}", path.display()));
+                return ExitCode::Io;
+            }
+        };
+        // Validated before a single byte of feed data is read, so a broken mapping fails here rather
+        // than partway through a document.
+        match Mapping::load(&bytes) {
+            Ok(mapping) => {
+                let _ = streams.note(&format!(
+                    "mapping `{}` v{} loaded from {}; the compiled parsers are not consulted for \
+                     this batch",
+                    mapping.id,
+                    mapping.version,
+                    path.display()
+                ));
+                parsers.register(MappedParser::boxed(mapping));
+            }
+            Err(error) => {
+                let _ = streams.problem(&error.to_string());
+                return ExitCode::ConfigInvalid;
+            }
+        }
+    }
+
+    let mut pipeline = Pipeline::new(parsers, ResourceLimits::defaults()).in_mode(mode);
     if args.no_retain {
         pipeline = pipeline.without_retaining_sources();
     }
