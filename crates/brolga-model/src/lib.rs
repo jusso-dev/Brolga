@@ -134,6 +134,7 @@ pub mod error;
 pub mod id;
 pub mod marking;
 pub mod observable;
+pub mod pack;
 pub mod provenance;
 pub mod relationship;
 pub mod schema;
@@ -150,6 +151,11 @@ pub use error::{ModelError, Result};
 pub use id::{Id, Identifiable};
 pub use marking::{Marking, MarkingSet, PapLevel, TlpLevel};
 pub use observable::{Observable, ObservableKind};
+pub use pack::{
+    Budget, BudgetReport, ClaimSummary, ContextPack, Contradiction, DetailLevel, EntitySummary,
+    EvidenceRef, Exclusion, ExclusionReason, Finding, Gap, PackGraph, PackMetadata, PackSubject,
+    Pivot, PolicyContext, Recommendation, RelationshipSummary, SightingSummary,
+};
 pub use provenance::{
     ContentHash, EvidenceLocator, EvidenceReference, GeneratedContent, GenerationMethod,
     OriginalRepresentation, Provenance, RecordOrigin, SourceObject, SourceOrigin, SyntheticOrigin,

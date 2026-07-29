@@ -21,9 +21,13 @@ use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 
+use brolga_model::MarkingSet;
 use brolga_model::claim::{Assertion, Claim};
 use brolga_model::relationship::{NodeRef, Relationship};
+use brolga_model::sighting::Sighting;
 use brolga_model::status::Disposition;
+use brolga_model::text::{ShortText, UntrustedText};
+use brolga_model::version::SchemaTag;
 use brolga_storage::store::{Direction, EdgeQuery, Page, StoreRead};
 
 use crate::error::{ApiError, RequestId, from_read_failure};
@@ -96,102 +100,14 @@ pub struct Budgets {
 // Response
 // -------------------------------------------------------------------------------------------------
 
-/// The pack.
-#[derive(Debug, Clone, Serialize)]
-pub struct ContextPack {
-    /// The version of this body.
-    pub schema_version: &'static str,
-    /// What was asked about, canonicalised — which may differ from what was sent.
-    pub subject: Subject,
-    /// The canonical observable id the answer was assembled from.
-    pub observable_id: String,
-    /// The purpose the consumer declared.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub purpose: Option<String>,
-    /// The detail level actually served, which may be lower than the one requested.
-    pub detail_level: &'static str,
-    /// What Brolga makes of it.
-    pub disposition: &'static str,
-    /// Named entities connected to the subject.
-    pub entities: Vec<EntitySummary>,
-    /// Assertions about the subject.
-    pub claims: Vec<ClaimSummary>,
-    /// Edges at the subject.
-    pub relationships: Vec<RelationshipSummary>,
-    /// Where the answer came from.
-    pub evidence: Vec<EvidenceRef>,
-    /// What Brolga does not know. Stated rather than left to be inferred from absence.
-    pub gaps: Vec<String>,
-    /// What was deliberately left out, and why.
-    pub exclusions: Vec<Exclusion>,
-    /// What was asked for and what it cost.
-    pub budget: BudgetReport,
-}
-
-/// A named thing connected to the subject.
-#[derive(Debug, Clone, Serialize)]
-pub struct EntitySummary {
-    /// The entity id.
-    pub id: String,
-    /// Its kind.
-    pub kind: String,
-    /// Its name.
-    pub name: String,
-    /// Its lifecycle status — a revoked entity is still an answer, but a different one.
-    pub status: String,
-}
-
-/// An assertion about the subject.
-#[derive(Debug, Clone, Serialize)]
-pub struct ClaimSummary {
-    /// What is asserted.
-    pub predicate: String,
-    /// What it is asserted about.
-    pub object: String,
-    /// The asserted status.
-    pub status: String,
-    /// Confidence, where the source expressed one.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confidence: Option<u8>,
-}
-
-/// An edge at the subject.
-#[derive(Debug, Clone, Serialize)]
-pub struct RelationshipSummary {
-    /// The relationship kind.
-    pub kind: String,
-    /// The source node.
-    pub source: String,
-    /// The target node.
-    pub target: String,
-    /// Its lifecycle status.
-    pub status: String,
-}
-
-/// Where a piece of the answer came from.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq, PartialOrd, Ord)]
-pub struct EvidenceRef {
-    /// The retained source object.
-    pub source_object_id: String,
-}
-
-/// Something left out of the pack.
-#[derive(Debug, Clone, Serialize)]
-pub struct Exclusion {
-    /// What was dropped.
-    pub category: &'static str,
-    /// Why.
-    pub reason: String,
-}
-
-/// What the pack cost.
-#[derive(Debug, Clone, Serialize)]
-pub struct BudgetReport {
-    /// What the consumer asked for.
-    pub requested: Budgets,
-    /// What was actually gathered.
-    pub consumed: Budgets,
-}
+// The pack is a *model* type, not an API one. It is the thing a consumer stores, diffs, and acts
+// on, and it must be identical whether it arrived over HTTP, over MCP, or out of the CLI — so it
+// lives in `brolga-model` beside every other versioned schema, and this layer only builds one.
+pub use brolga_model::pack::{
+    Budget, BudgetReport, ClaimSummary, ContextPack, Contradiction, DetailLevel, EntitySummary,
+    EvidenceRef, Exclusion, ExclusionReason, Finding, Gap, PackGraph, PackMetadata, PackSubject,
+    Pivot, PolicyContext, Recommendation, RelationshipSummary, SightingSummary,
+};
 
 // -------------------------------------------------------------------------------------------------
 // Handler
@@ -268,18 +184,20 @@ pub async fn context<S: StoreRead>(
                 }
             }
 
-            Ok((claims, edges, sightings, entities))
+            // Read inside the same lock as everything else, so the version describes the graph the
+            // pack was actually assembled from rather than one it may have moved to since.
+            let graph_version = store.graph_version()?;
+
+            Ok((claims, edges, sightings, entities, graph_version))
         })
         .map_err(|error| from_read_failure(&error, &request_id))?;
 
-    let (claims, edges, sightings, entities) = gathered;
+    let (claims, edges, sightings, entities, graph_version) = gathered;
 
     let mut evidence: BTreeSet<EvidenceRef> = BTreeSet::new();
     for claim in &claims {
         for source in claim.origin.source_objects() {
-            evidence.insert(EvidenceRef {
-                source_object_id: source.to_string(),
-            });
+            evidence.insert(EvidenceRef::new(source.to_string()));
         }
     }
 
@@ -287,86 +205,222 @@ pub async fn context<S: StoreRead>(
 
     let mut gaps = Vec::new();
     if claims.is_empty() && edges.is_empty() {
-        gaps.push("nothing is stored about this observable".to_owned());
+        gaps.extend(gap("store", "nothing is stored about this observable"));
     }
     if sightings.is_empty() {
-        gaps.push("no sightings recorded; Brolga cannot say when this was last seen".to_owned());
+        gaps.extend(gap(
+            "sightings",
+            "no sightings recorded; Brolga cannot say when this was last seen",
+        ));
     }
     if evidence.is_empty() && !claims.is_empty() {
-        gaps.push("claims are stored but no source object was retained for them".to_owned());
+        gaps.extend(gap(
+            "evidence",
+            "claims are stored but no source object was retained for them",
+        ));
     }
     if !claims.is_empty() && claims.iter().all(|claim| !claim.status.is_current()) {
         // Not the same as never having heard of it. A consumer that treats them alike will
         // re-raise a finding someone deliberately retracted.
-        gaps.push(
-            "every stored claim about this observable has been withdrawn or superseded".to_owned(),
-        );
+        gaps.extend(gap(
+            "claims",
+            "every stored claim about this observable has been withdrawn or superseded",
+        ));
     }
 
     let mut exclusions = Vec::new();
+    let mut exhausted = false;
     if u32::try_from(claims.len()).unwrap_or(u32::MAX) >= budget {
-        exclusions.push(Exclusion {
-            category: "claims",
-            reason: format!("stopped at the {budget}-record budget; there may be more"),
-        });
+        exhausted = true;
+        exclusions.extend(exclusion("claims", ExclusionReason::BudgetExhausted));
     }
     if u32::try_from(edges.len()).unwrap_or(u32::MAX) >= edge_budget {
-        exclusions.push(Exclusion {
-            category: "relationships",
-            reason: format!("stopped at the {edge_budget}-relationship budget; there may be more"),
-        });
+        exhausted = true;
+        exclusions.extend(exclusion("relationships", ExclusionReason::BudgetExhausted));
     }
 
     // Served, not requested. Telling a consumer it received L5 when it received L1 is worse than
     // telling it the truth, because it will stop looking for the depth it did not get.
-    let served_level = "L1";
+    let served_level = DetailLevel::L1;
     if request
         .detail_level
         .as_deref()
-        .is_some_and(|level| level != served_level)
+        .is_some_and(|level| level != served_level.as_str())
     {
-        exclusions.push(Exclusion {
-            category: "detail_level",
-            reason: format!("progressive disclosure is not implemented; served {served_level}"),
-        });
+        exclusions.extend(exclusion("detail_level", ExclusionReason::NotImplemented));
+        gaps.extend(gap(
+            "detail_level",
+            "progressive disclosure is not implemented; served L1",
+        ));
     }
 
     let mut summaries: Vec<EntitySummary> = entities
         .iter()
-        .map(|entity| EntitySummary {
-            id: entity.id.to_string(),
-            kind: entity.kind.as_str().to_owned(),
-            name: entity.name.as_str().to_owned(),
-            status: entity.status.as_str().to_owned(),
+        .filter_map(|entity| {
+            Some(EntitySummary {
+                id: entity.id.to_string(),
+                kind: ShortText::new(entity.kind.as_str()).ok()?,
+                name: entity.name.clone(),
+                status: ShortText::new(entity.status.as_str()).ok()?,
+            })
         })
         .collect();
     summaries.sort_by(|left, right| left.id.cmp(&right.id));
     summaries.dedup_by(|left, right| left.id == right.id);
 
-    Ok(Json(ContextPack {
-        schema_version: CONTEXT_PACK_SCHEMA,
-        subject: Subject {
-            kind: observable.kind().as_str().to_owned(),
-            value: observable.canonical_value(),
+    let evidence: Vec<EvidenceRef> = evidence.into_iter().collect();
+
+    // The disposition is a *finding*, and a finding must cite its evidence — which is what makes
+    // the pack's central assertion defensible rather than merely present. Where nothing was
+    // retained, no finding is emitted and the gap above says why; a finding citing nothing would
+    // fail validation, and rightly.
+    let findings = disposition_finding(disposition, &evidence)
+        .into_iter()
+        .collect();
+
+    let graph = PackGraph {
+        entities: summaries,
+        claims: claims
+            .iter()
+            .filter_map(|claim| summarise_claim(claim, &evidence))
+            .collect(),
+        relationships: edges.iter().filter_map(summarise_relationship).collect(),
+        sightings: sightings.iter().filter_map(summarise_sighting).collect(),
+        ..PackGraph::default()
+    };
+
+    let pack = ContextPack {
+        schema_version: SchemaTag::new(),
+        fingerprint: String::new(),
+        subject: PackSubject {
+            kind: ShortText::new(observable.kind().as_str())
+                .map_err(|error| unusable_pack(&error.to_string(), &request_id))?,
+            value: ShortText::new(bounded_value(&observable.canonical_value()))
+                .map_err(|error| unusable_pack(&error.to_string(), &request_id))?,
+            observable_id: observable_id.to_string(),
         },
-        observable_id: observable_id.to_string(),
-        purpose: request.purpose,
+        purpose: request
+            .purpose
+            .as_deref()
+            .and_then(|purpose| ShortText::new(purpose).ok()),
         detail_level: served_level,
         disposition,
-        claims: claims.iter().map(summarise_claim).collect(),
-        relationships: edges.iter().map(summarise_relationship).collect(),
-        evidence: evidence.into_iter().collect(),
-        entities: summaries,
+        graph,
+        findings,
+        recommendations: Vec::new(),
         gaps,
         exclusions,
         budget: BudgetReport {
-            requested,
-            consumed: Budgets {
-                max_objects: Some(u32::try_from(claims.len()).unwrap_or(u32::MAX)),
-                max_relationships: Some(u32::try_from(edges.len()).unwrap_or(u32::MAX)),
+            requested: Budget {
+                objects: requested.max_objects.map(u64::from),
+                relationships: requested.max_relationships.map(u64::from),
+                ..Budget::default()
             },
+            consumed: Budget {
+                objects: Some(u64::try_from(claims.len()).unwrap_or(u64::MAX)),
+                relationships: Some(u64::try_from(edges.len()).unwrap_or(u64::MAX)),
+                ..Budget::default()
+            },
+            exhausted,
         },
-    }))
+        policy: PolicyContext {
+            recipient: None,
+            // Gathered from the records that reached the pack, so a consumer can see what handling
+            // applies without opening every claim. Nothing is withheld yet — that is #37 — and
+            // `restricted` says so honestly rather than implying a filter that does not run.
+            markings: pack_markings(&claims, &edges),
+            restricted: false,
+        },
+        metadata: PackMetadata {
+            generated_at: brolga_model::Timestamp::from_offset_date_time(
+                ::time::OffsetDateTime::now_utc(),
+            )
+            .to_rfc3339(),
+            request_id: Some(request_id.as_str().to_owned()),
+            build_duration_ms: None,
+            brolga_version: env!("CARGO_PKG_VERSION").to_owned(),
+            graph_version,
+        },
+    }
+    .validated()
+    .map_err(|error| unusable_pack(&error.to_string(), &request_id))?;
+
+    Ok(Json(pack))
+}
+
+/// A pack that could not be built, logged and reported as an internal failure.
+///
+/// A validation failure here means Brolga assembled something that violates its own contract —
+/// most likely a finding with no evidence. Returning the half-built pack would publish exactly the
+/// thing validation exists to prevent, so it is refused and the reason goes to the log rather than
+/// to the caller.
+fn unusable_pack(reason: &str, request_id: &RequestId) -> ApiError {
+    tracing::error!(
+        request_id = request_id.as_str(),
+        reason,
+        "assembled a context pack that failed its own validation"
+    );
+    ApiError::Internal
+}
+
+/// The pack's central assertion, as a finding that cites its evidence.
+fn disposition_finding(disposition: Disposition, evidence: &[EvidenceRef]) -> Option<Finding> {
+    if evidence.is_empty() {
+        return None;
+    }
+    Some(Finding {
+        kind: ShortText::new("disposition").ok()?,
+        statement: UntrustedText::new(format!("Brolga assesses this observable as {disposition}."))
+            .ok()?,
+        evidence: evidence.to_vec(),
+    })
+}
+
+/// Every marking carried by the records that reached the pack.
+fn pack_markings(claims: &[Claim], edges: &[Relationship]) -> MarkingSet {
+    let mut set = MarkingSet::empty();
+    for marking in claims
+        .iter()
+        .flat_map(|claim| claim.markings.iter())
+        .chain(edges.iter().flat_map(|edge| edge.markings.iter()))
+    {
+        set.insert(marking.clone());
+    }
+    set
+}
+
+/// Truncate a canonical value to what `ShortText` accepts, at a character boundary.
+fn bounded_value(value: &str) -> String {
+    if value.len() <= ShortText::MAX_BYTES {
+        return value.to_owned();
+    }
+    let mut end = ShortText::MAX_BYTES;
+    while end > 0 && !value.is_char_boundary(end) {
+        end = end.saturating_sub(1);
+    }
+    value.get(..end).unwrap_or_default().to_owned()
+}
+
+/// A gap, from compile-time literals.
+///
+/// `Option` rather than a fallback value. Every caller passes a literal that always constructs, so
+/// the `None` arm is unreachable in practice — and a fabricated placeholder gap would be worse than
+/// no gap, because a gap is a statement about what Brolga does not know and an invented one is a
+/// false statement about that.
+fn gap(subject: &'static str, detail: &'static str) -> Option<Gap> {
+    Some(Gap {
+        subject: ShortText::new(subject).ok()?,
+        detail: UntrustedText::new(detail).ok()?,
+    })
+}
+
+/// An exclusion naming a category and a machine-readable reason.
+fn exclusion(category: &'static str, reason: ExclusionReason) -> Option<Exclusion> {
+    Some(Exclusion {
+        category: ShortText::new(category).ok()?,
+        reason,
+        dropped: None,
+    })
 }
 
 /// What Brolga makes of the subject overall.
@@ -382,19 +436,19 @@ pub async fn context<S: StoreRead>(
 ///
 /// `allow_listed` outranks `benign` because it is a decision about how Brolga treats the subject
 /// rather than a finding about it, and a decision should not be silently overridden by a feed.
-fn disposition_of(claims: &[Claim], _edges: &[Relationship]) -> &'static str {
-    let mut strongest = None;
+fn disposition_of(claims: &[Claim], _edges: &[Relationship]) -> Disposition {
+    let mut strongest: Option<(u8, Disposition)> = None;
 
     for claim in claims.iter().filter(|claim| claim.status.is_current()) {
         if let Assertion::Disposition(disposition) = &claim.assertion {
             let rank = severity(*disposition);
             if strongest.is_none_or(|(best, _)| rank > best) {
-                strongest = Some((rank, disposition.as_str()));
+                strongest = Some((rank, *disposition));
             }
         }
     }
 
-    strongest.map_or("unknown", |(_, name)| name)
+    strongest.map_or(Disposition::Unknown, |(_, disposition)| disposition)
 }
 
 /// How strongly a disposition should carry when several disagree.
@@ -412,7 +466,7 @@ const fn severity(disposition: Disposition) -> u8 {
     }
 }
 
-fn summarise_claim(claim: &Claim) -> ClaimSummary {
+fn summarise_claim(claim: &Claim, evidence: &[EvidenceRef]) -> Option<ClaimSummary> {
     // The assertion's shape decides how it reads. A disposition is the answer a consumer acts on;
     // an attribute is a fact about the subject; a narrative is prose from a feed and is passed
     // through as evidence rather than interpreted.
@@ -430,24 +484,52 @@ fn summarise_claim(claim: &Claim) -> ClaimSummary {
         _ => ("unrecognised".to_owned(), String::new()),
     };
 
-    ClaimSummary {
-        predicate,
-        object,
-        status: claim.status.as_str().to_owned(),
+    let own: Vec<EvidenceRef> = claim
+        .origin
+        .source_objects()
+        .iter()
+        .map(|source| EvidenceRef::new(source.to_string()))
+        .collect();
+
+    Some(ClaimSummary {
+        predicate: ShortText::new(predicate).ok()?,
+        object: UntrustedText::new(object).ok()?,
+        status: ShortText::new(claim.status.as_str()).ok()?,
         confidence: claim
             .confidence
             .as_ref()
             .map(|breakdown| breakdown.overall.get()),
-    }
+        // Its own sources where it has them, falling back to the pack's so a claim is never
+        // rendered as evidence-free when the pack as a whole is not.
+        evidence: if own.is_empty() {
+            evidence.to_vec()
+        } else {
+            own
+        },
+    })
 }
 
-fn summarise_relationship(edge: &Relationship) -> RelationshipSummary {
-    RelationshipSummary {
-        kind: edge.kind.as_str().to_owned(),
+fn summarise_relationship(edge: &Relationship) -> Option<RelationshipSummary> {
+    Some(RelationshipSummary {
+        kind: ShortText::new(edge.kind.as_str()).ok()?,
         source: edge.source.to_string(),
         target: edge.target.to_string(),
-        status: edge.status.as_str().to_owned(),
-    }
+        status: ShortText::new(edge.status.as_str()).ok()?,
+    })
+}
+
+/// An observation, as the pack renders one.
+///
+/// The window and the count, which is what corroboration is computed from. An unattributed sighting
+/// keeps `observer` absent rather than naming a placeholder — an invented observer looks exactly
+/// like corroboration, which is the one thing a sighting exists to measure.
+fn summarise_sighting(sighting: &Sighting) -> Option<SightingSummary> {
+    Some(SightingSummary {
+        count: sighting.count.get(),
+        first_seen: sighting.first_seen.to_rfc3339(),
+        last_seen: sighting.last_seen.to_rfc3339(),
+        observer: sighting.observer.map(|id| id.to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -458,14 +540,20 @@ mod tests {
 
     #[test]
     fn an_observable_with_nothing_stored_is_unknown_not_benign() {
-        assert_eq!(disposition_of(&[], &[]), "unknown");
+        assert_eq!(disposition_of(&[], &[]), Disposition::Unknown);
     }
 
     /// The pack's schema id is what Kelpie's consumer contract was written against. Changing it is
     /// a breaking change for an already-deployed integration.
     #[test]
     fn the_pack_schema_is_the_one_consumers_were_told_about() {
-        assert_eq!(CONTEXT_PACK_SCHEMA, "brolga.context_pack/1.0");
+        use brolga_model::version::VersionedSchema;
+
+        assert_eq!(
+            ContextPack::schema_identifier(),
+            "brolga.context_pack/1.0",
+            "the pack's schema id is what a deployed consumer contract was written against"
+        );
     }
 
     /// Checked at compile time, because both are constants: a runtime assertion about them can

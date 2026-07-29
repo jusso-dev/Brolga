@@ -136,6 +136,48 @@ an observable whose claims have all been retracted reports `unknown` and says so
 `exclusions` is what was deliberately left out — a budget that truncated the answer says so, because
 a silently truncated pack reads as a complete one.
 
+`exclusions[].reason` is a **closed vocabulary**, not prose, because a consumer has to branch on it:
+
+| Reason | Retrying with a larger budget helps |
+| --- | --- |
+| `budget_exhausted` | yes |
+| `policy_restricted` | no |
+| `below_detail_level` | no |
+| `not_implemented` | no |
+
+A free-text reason would make those indistinguishable to anything but a human, and retrying a policy
+refusal is how a client turns a refusal into a loop.
+
+`budget.exhausted` is a separate boolean rather than something to infer by comparing `requested` and
+`consumed`. A consumer that has to derive "was this truncated?" from six optional numbers will
+eventually derive it wrongly, and the failure mode is treating a partial answer as a complete one.
+A pack that reports an exhausted budget and lists no budget exclusion fails validation.
+
+#### `findings` and evidence
+
+Every entry in `findings` and `recommendations` carries a non-empty `evidence` array. That is
+enforced by the schema's validation, not left to convention: an assertion an analyst cannot trace to
+a retained source object is one they cannot defend, and enrichment that cannot be defended is worse
+than none. A pack whose finding cites nothing is rejected rather than served.
+
+#### `fingerprint`
+
+A digest over the pack's **content**. Two packs built from the same graph, for the same subject,
+under the same profile fingerprint alike however far apart they were built — which is what makes a
+pack cacheable and a diff between two of them meaningful.
+
+Deliberately outside the fingerprint's input, and published as `FINGERPRINT_EXCLUDED` so a consumer
+can state what it relies on: `generated_at`, `request_id`, `build_duration_ms`, `brolga_version`.
+Including the timestamp would make every pack unique, which sounds harmless and destroys every use
+the fingerprint has.
+
+`metadata.graph_version` **is** inside it. A pack built against a different graph is a different
+answer even when it says the same words.
+
+The fingerprint is recomputed on deserialisation and compared against the declared value. A pack
+edited in transit does not parse, so a consumer caching on the fingerprint cannot cache the wrong
+contents under the right key.
+
 #### Detail levels
 
 `detail_level` is accepted but only `L1` is served. The pack reports the level **actually served**
