@@ -18,6 +18,7 @@
 )]
 
 use brolga_ingest::detect::FormatHint;
+use brolga_ingest::formats::stix_pattern;
 use brolga_ingest::testing::{CatchAllParser, TestRecordsParser};
 use brolga_ingest::{Document, ParserRegistry, Pipeline};
 use brolga_model::{
@@ -146,5 +147,91 @@ proptest! {
             matches!(error, brolga_ingest::IngestError::DocumentTooLarge { .. }),
             "got {error:?}"
         );
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// STIX patterning — attacker-controlled text with its own grammar
+// ---------------------------------------------------------------------------------------------
+
+/// Fragments a pattern is built from, including the ones that make a *nearly* valid pattern.
+///
+/// A generator of arbitrary characters almost never produces a balanced bracket, so it exercises
+/// the "refuse immediately" path and nothing else. These are the shapes that reach the path reader,
+/// the string-literal scanner, and the `OR` chain — where an index or a `strip_prefix` would go
+/// wrong.
+fn pattern_fragment() -> impl proptest::strategy::Strategy<Value = String> {
+    prop_oneof![
+        Just("[".to_owned()),
+        Just("]".to_owned()),
+        Just("=".to_owned()),
+        Just("!=".to_owned()),
+        Just("OR".to_owned()),
+        Just("AND".to_owned()),
+        Just("FOLLOWEDBY".to_owned()),
+        Just("'".to_owned()),
+        Just("\\'".to_owned()),
+        Just("\\\\".to_owned()),
+        Just("ipv4-addr:value".to_owned()),
+        Just("file:hashes.'SHA-256'".to_owned()),
+        Just("'192.0.2.1'".to_owned()),
+        Just(" ".to_owned()),
+        "[^\\p{Cc}]{0,8}",
+    ]
+}
+
+proptest! {
+    /// A pattern is attacker-controlled text with its own grammar, read by a hand-written
+    /// tokeniser — the shape most likely to hold a panic. Every input is understood or refused,
+    /// and neither is an unwind.
+    #[test]
+    fn the_pattern_reader_never_panics(fragments in prop::collection::vec(pattern_fragment(), 0..48)) {
+        let pattern = fragments.join("");
+        let outcome = stix_pattern::observables_of(&pattern);
+        prop_assert!(outcome.is_ok() || outcome.is_err());
+    }
+
+    /// Understood must mean "named something". An empty success would let a caller treat a pattern
+    /// it did not read as one asserting nothing — the silent miss this parser exists to prevent.
+    #[test]
+    fn a_pattern_that_parses_always_names_at_least_one_observable(
+        fragments in prop::collection::vec(pattern_fragment(), 0..48),
+    ) {
+        let pattern = fragments.join("");
+        if let Ok(observables) = stix_pattern::observables_of(&pattern) {
+            prop_assert!(!observables.is_empty(), "{pattern}");
+            prop_assert!(observables.len() <= stix_pattern::MAX_ALTERNATIVES, "{pattern}");
+        }
+    }
+
+    /// Reading a pattern is a pure function of its text. If it were not, one bundle could ingest
+    /// differently on two runs, and every count downstream would be unreproducible.
+    #[test]
+    fn reading_a_pattern_is_deterministic(fragments in prop::collection::vec(pattern_fragment(), 0..48)) {
+        let pattern = fragments.join("");
+        let first = stix_pattern::observables_of(&pattern);
+        let second = stix_pattern::observables_of(&pattern);
+        prop_assert_eq!(first.is_ok(), second.is_ok());
+        if let (Ok(first), Ok(second)) = (first, second) {
+            prop_assert_eq!(first, second);
+        }
+    }
+
+    /// Any address, in any of the spellings a feed publishes it in, must reach the same observable
+    /// through a STIX pattern as through a MISP attribute. The two paths agreeing is what keeps one
+    /// address from sitting in the graph twice.
+    #[test]
+    fn a_pattern_and_a_bare_value_canonicalise_alike(
+        a in 0_u8..=255, b in 0_u8..=255, c in 0_u8..=255, d in 0_u8..=255,
+        pad in " {0,4}",
+    ) {
+        let address = format!("{a}.{b}.{c}.{d}");
+        let pattern = format!("[{pad}ipv4-addr:value{pad}={pad}'{address}'{pad}]");
+
+        let from_pattern = stix_pattern::observables_of(&pattern).unwrap();
+        let from_value = brolga_ingest::canon::net::ip_address(&address).unwrap().into_value();
+
+        prop_assert_eq!(from_pattern.len(), 1);
+        prop_assert_eq!(from_pattern[0].id(), from_value.id());
     }
 }

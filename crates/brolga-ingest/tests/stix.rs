@@ -21,6 +21,7 @@ use brolga_storage::{IntelligenceStore, RecordKind, SqliteStore, StoreRead};
 const BUNDLE: &str = include_str!("fixtures/stix/bundle.json");
 const ATTACK: &str = include_str!("fixtures/stix/attack.json");
 const BARE: &str = include_str!("fixtures/stix/bare-object.json");
+const INDICATORS: &str = include_str!("fixtures/stix/indicators.json");
 
 fn pipeline(mode: IngestMode) -> Pipeline {
     let mut registry = ParserRegistry::new();
@@ -94,12 +95,47 @@ fn a_representative_stix_bundle_ingests_into_typed_records() {
     let report = ingest(&mut store, IngestMode::Permissive, BUNDLE.as_bytes());
 
     assert!(report.reconciles(), "{report:?}");
-    // 4 entities (intrusion-set, malware, attack-pattern, revoked campaign),
-    // 2 claims from SCOs, 2 relationships. The `grouping` is quarantined.
-    assert_eq!(store.count(RecordKind::Entity).unwrap(), 4);
+    // 6 entities (intrusion-set, malware, attack-pattern, revoked campaign, identity,
+    // infrastructure), 2 claims from SCOs, 2 relationships. `grouping` and `course-of-action` are
+    // quarantined.
+    assert_eq!(store.count(RecordKind::Entity).unwrap(), 6);
     assert_eq!(store.count(RecordKind::Claim).unwrap(), 2);
     assert_eq!(store.count(RecordKind::Relationship).unwrap(), 2);
-    assert_eq!(report.rejected, 1, "only the unsupported `grouping`");
+    assert_eq!(report.rejected, 2, "`grouping` and `course-of-action`");
+}
+
+/// `course-of-action` is a mitigation, and no canonical entity kind means one. Filing it under the
+/// nearest kind would assert it is a technique or a tool, which it is not — so it takes the same
+/// quarantine every other unmapped type takes, and the module documentation says so.
+#[test]
+fn a_course_of_action_is_quarantined_rather_than_filed_under_the_nearest_kind() {
+    let report = prepare(BUNDLE.as_bytes());
+    assert!(
+        report
+            .rejected
+            .iter()
+            .any(|record| record.reason.contains("course-of-action")),
+        "{:?}",
+        report.rejected
+    );
+}
+
+/// The SDO types the module documentation lists must actually map. A doc that named a type the
+/// code quarantined is how an operator concludes their feed is broken.
+#[test]
+fn identity_and_infrastructure_sdos_become_entities() {
+    let report = prepare(BUNDLE.as_bytes());
+    let kinds: Vec<EntityKind> = report
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            ParsedRecord::Entity(entity) => Some(entity.kind),
+            _ => None,
+        })
+        .collect();
+
+    assert!(kinds.contains(&EntityKind::Identity), "{kinds:?}");
+    assert!(kinds.contains(&EntityKind::Infrastructure), "{kinds:?}");
 }
 
 /// The ATT&CK enterprise shape — techniques with external references, groups, and `uses` edges.
@@ -135,7 +171,7 @@ fn the_same_actor_from_two_bundles_with_different_stix_ids_is_one_entity() {
     ingest(&mut store, IngestMode::Permissive, first.as_bytes());
 
     let entities = store.count(RecordKind::Entity).unwrap();
-    assert_eq!(entities, 4, "the second bundle described the same things");
+    assert_eq!(entities, 6, "the second bundle described the same things");
 }
 
 /// Detection must be decisive on STIX and must say why.
@@ -179,11 +215,13 @@ fn an_unsupported_object_type_is_quarantined_with_an_explicit_reason() {
     let quarantined = store
         .quarantined_for_source(&ContentHash::of(BUNDLE.as_bytes()))
         .unwrap();
-    assert_eq!(quarantined.len(), 1);
+    assert_eq!(quarantined.len(), 2, "`grouping` and `course-of-action`");
 
-    let record = &quarantined[0];
+    let record = quarantined
+        .iter()
+        .find(|record| record.reason.contains("grouping"))
+        .expect("the `grouping` quarantine");
     assert_eq!(record.reason_kind, "unsupported_object_type");
-    assert!(record.reason.contains("grouping"), "{}", record.reason);
     assert!(
         record.reason.contains("quarantined rather than coerced"),
         "the diagnostic says why it was not mapped: {}",
@@ -614,4 +652,478 @@ fn every_record_cites_the_bundle_it_came_from() {
             "every record cites the bundle it was parsed from"
         );
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// "STIX indicators contribute observables" — https://github.com/jusso-dev/Brolga/issues/95
+// ---------------------------------------------------------------------------------------------
+
+/// Every claim in a report, for the assertions below.
+fn claims(report: &brolga_ingest::DocumentReport) -> Vec<&brolga_model::Claim> {
+    report
+        .records
+        .iter()
+        .filter_map(|record| match record {
+            ParsedRecord::Claim(claim) => Some(claim.as_ref()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Every claim whose subject is a given observable.
+fn claims_about<'a>(
+    report: &'a brolga_ingest::DocumentReport,
+    observable: &brolga_model::Observable,
+) -> Vec<&'a brolga_model::Claim> {
+    let subject = brolga_model::NodeRef::Observable(observable.id());
+    claims(report)
+        .into_iter()
+        .filter(|claim| claim.subject == subject)
+        .collect()
+}
+
+fn ipv4(value: &str) -> brolga_model::Observable {
+    brolga_model::Observable::Ipv4Address(value.parse().unwrap())
+}
+
+/// **The criterion this issue turns on.** An `indicator` is where STIX carries observables, so a
+/// bundle of them that produced nothing left every context lookup answering "unknown" about
+/// addresses Brolga held an indicator for — a miss indistinguishable from a genuine one.
+#[test]
+fn an_ipv4_indicator_produces_a_claim_about_the_address_its_pattern_names() {
+    let report = prepare(INDICATORS.as_bytes());
+    let about = claims_about(&report, &ipv4("203.0.113.42"));
+
+    assert!(
+        !about.is_empty(),
+        "the indicator contributed no observable: {:?}",
+        report.rejected
+    );
+    assert!(
+        about.iter().any(|claim| matches!(
+            &claim.assertion,
+            brolga_model::Assertion::Attribute { name, value }
+                if name.as_str() == "stix.indicator.pattern"
+                    && value.as_str().contains("203.0.113.42")
+        )),
+        "the pattern is retained as published"
+    );
+}
+
+/// The second criterion, and the one that decides whether a mixed deployment double-counts. The
+/// MISP and STIX paths must derive **one** identifier for one address, or the same address sits in
+/// the graph twice and a lookup finds half of what is held.
+#[test]
+fn a_stix_indicator_and_a_misp_attribute_for_one_address_derive_one_observable() {
+    use brolga_ingest::formats::misp::MispParser;
+
+    const EVENT: &str = r#"{"Event":{"uuid":"33333333-3333-4333-8333-333333333333",
+        "info":"C2 infrastructure","Attribute":[
+        {"uuid":"44444444-4444-4444-8444-444444444444","type":"ip-dst",
+         "value":"203.0.113.42","to_ids":true}]}}"#;
+
+    let stix = prepare(INDICATORS.as_bytes());
+
+    let mut registry = ParserRegistry::new();
+    registry.register(MispParser::boxed());
+    let misp = Pipeline::with_defaults(registry)
+        .in_mode(IngestMode::Permissive)
+        .prepare(
+            &Document {
+                bytes: EVENT.as_bytes(),
+                media_type: MediaType::new("application/vnd.misp+json").unwrap(),
+                file_name: None,
+                origin: SourceOrigin::NetworkFeed {
+                    publisher: ShortText::new("misp-fixture").unwrap(),
+                    location: None,
+                },
+                retrieved_at: Timestamp::unix_epoch(),
+            },
+            &CancellationToken::never_cancelled(),
+        )
+        .unwrap();
+
+    let address = ipv4("203.0.113.42");
+    let from_stix = claims_about(&stix, &address);
+    let from_misp = claims_about(&misp, &address);
+
+    assert!(!from_stix.is_empty(), "the STIX indicator mapped nothing");
+    assert!(!from_misp.is_empty(), "the MISP attribute mapped nothing");
+    assert_eq!(
+        from_stix[0].subject, from_misp[0].subject,
+        "the two ingestion paths must address one observable"
+    );
+}
+
+/// `indicator_types` is the only field of an indicator that states an assessment, so it is the only
+/// one that may produce a disposition. Presence in a feed is not evidence of maliciousness.
+#[test]
+fn indicator_types_are_reflected_in_the_claims_disposition() {
+    use brolga_model::{Assertion, Disposition};
+
+    let report = prepare(INDICATORS.as_bytes());
+    let dispositions: Vec<Disposition> = claims(&report)
+        .into_iter()
+        .filter_map(|claim| match claim.assertion {
+            Assertion::Disposition(disposition) => Some(disposition),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        dispositions.contains(&Disposition::Malicious),
+        "malicious-activity"
+    );
+    assert!(dispositions.contains(&Disposition::Benign), "benign");
+    assert!(
+        dispositions.contains(&Disposition::Suspicious),
+        "compromised"
+    );
+    // Three from single-observable indicators, and one per alternative of the disjunction.
+    assert_eq!(
+        dispositions.len(),
+        5,
+        "`anonymization` and `attribution` describe a subject without assessing it, so neither \
+         asserts a disposition: {dispositions:?}"
+    );
+}
+
+/// A label that describes rather than assesses is still *recorded*. Not asserting a disposition
+/// for it must not mean discarding what the publisher said.
+#[test]
+fn a_descriptive_indicator_type_is_recorded_even_though_it_asserts_no_disposition() {
+    use brolga_model::Assertion;
+
+    let report = prepare(INDICATORS.as_bytes());
+    assert!(
+        claims(&report).into_iter().any(|claim| matches!(
+            &claim.assertion,
+            Assertion::Attribute { name, value }
+                if name.as_str() == "stix.indicator_type" && value.as_str() == "anonymization"
+        )),
+        "the label is kept as evidence"
+    );
+}
+
+/// `valid_from` and `valid_until` are the publisher's statement about when their claim applies, so
+/// they land on the validity window rather than the observation window.
+#[test]
+fn valid_from_and_valid_until_become_the_claims_validity_window() {
+    let report = prepare(INDICATORS.as_bytes());
+    let claim = claims_about(&report, &ipv4("203.0.113.42"))[0];
+
+    assert_eq!(
+        claim
+            .temporal
+            .valid_from
+            .map(Timestamp::to_rfc3339)
+            .as_deref(),
+        Some("2024-01-01T00:00:00Z")
+    );
+    assert_eq!(
+        claim
+            .temporal
+            .valid_until
+            .map(Timestamp::to_rfc3339)
+            .as_deref(),
+        Some("2024-12-31T23:59:59Z")
+    );
+    assert!(
+        claim.temporal.first_seen.is_none(),
+        "a validity window is not an observation"
+    );
+}
+
+/// The criterion that keeps the fix honest. A pattern outside the representable subset must be
+/// quarantined **naming the construct** — a half-parsed pattern asserts something broader than the
+/// publisher did, which is worse than an unparsed one.
+#[test]
+fn an_unrepresentable_pattern_is_quarantined_naming_what_was_not_understood() {
+    let report = prepare(INDICATORS.as_bytes());
+
+    let reasons: Vec<&str> = report
+        .rejected
+        .iter()
+        .map(|record| record.reason.as_str())
+        .collect();
+
+    for named in ["AND", "FOLLOWEDBY", "windows-registry-key", "snort"] {
+        assert!(
+            reasons.iter().any(|reason| reason.contains(named)),
+            "no quarantine reason named `{named}`: {reasons:?}"
+        );
+    }
+    assert!(
+        report
+            .rejected
+            .iter()
+            .any(|record| record.reason_kind == "unrepresentable_pattern"),
+        "{reasons:?}"
+    );
+}
+
+/// The conjunction case, stated as a fact about the store rather than about a reason string: the
+/// address inside a pattern Brolga refused must not appear as a claim, because the publisher
+/// asserted the address *together with* a port and the address alone is a wider claim.
+#[test]
+fn a_multi_comparison_pattern_contributes_nothing_rather_than_its_first_half() {
+    let report = prepare(INDICATORS.as_bytes());
+    assert!(
+        claims_about(&report, &ipv4("198.51.100.7")).is_empty(),
+        "the conjunction was partially extracted"
+    );
+    assert!(
+        claims_about(&report, &ipv4("198.51.100.8")).is_empty(),
+        "the first of two observation expressions was extracted alone"
+    );
+}
+
+/// An `indicates` edge names the indicator, not the observable. It must land on the observable the
+/// pattern is about, or the edge points at a record that was never written.
+#[test]
+fn an_indicates_edge_from_an_indicator_resolves_to_the_observable_its_pattern_names() {
+    use brolga_model::{NodeRef, RelationshipKind};
+
+    let report = prepare(INDICATORS.as_bytes());
+    let edge = report
+        .records
+        .iter()
+        .find_map(|record| match record {
+            ParsedRecord::Relationship(rel) if rel.kind == RelationshipKind::Indicates => Some(rel),
+            _ => None,
+        })
+        .expect("the `indicates` relationship");
+
+    assert_eq!(
+        edge.source,
+        NodeRef::Observable(ipv4("203.0.113.42").id()),
+        "the edge starts at the observable, not at a node the indicator invented"
+    );
+}
+
+/// An edge whose indicator was quarantined must be rejected rather than dangling. A relationship to
+/// a record that does not exist is invisible in traversal, which is worse than a missing edge.
+#[test]
+fn an_edge_from_a_quarantined_indicator_is_rejected_rather_than_left_dangling() {
+    let report = prepare(INDICATORS.as_bytes());
+    assert!(
+        report
+            .rejected
+            .iter()
+            .any(|record| record.reason_kind == "unresolved_source_ref"),
+        "{:?}",
+        report.rejected
+    );
+}
+
+/// Markings, revocation, and canonicalisation reach indicator claims the same way they reach every
+/// other record — the mapping is new, the guarantees around it are not.
+#[test]
+fn indicator_claims_carry_markings_revocation_and_canonical_values() {
+    use brolga_model::Observable;
+
+    let report = prepare(INDICATORS.as_bytes());
+
+    assert_eq!(
+        count_amber(&report),
+        4,
+        "the AMBER-marked indicator's four claims"
+    );
+
+    let url = Observable::Url(
+        brolga_model::observable::CanonicalUrl::new("https://example.com/payload").unwrap(),
+    );
+    let revoked = claims_about(&report, &url);
+    assert_eq!(revoked.len(), 1);
+    assert_eq!(revoked[0].status, LifecycleStatus::Revoked);
+
+    let domain =
+        Observable::DomainName(brolga_model::observable::DomainName::new("example.com").unwrap());
+    assert!(
+        !claims_about(&report, &domain).is_empty(),
+        "`EXAMPLE.COM.` canonicalises the same way an SCO's value does"
+    );
+}
+
+/// The whole fixture, ingested. Counts rather than "more than zero", so a mapping that quietly
+/// stopped producing something would fail here.
+#[test]
+fn an_indicator_bundle_ingests_into_claims_a_lookup_can_reach() {
+    let mut store = store();
+    let report = ingest(&mut store, IngestMode::Permissive, INDICATORS.as_bytes());
+
+    assert!(report.reconciles(), "{report:?}");
+    // 25 claims. Six single-observable indicators contribute 15 between them — a pattern claim
+    // each, one `name`, four `indicator_types` labels, three dispositions — and the disjunction
+    // contributes 5 per alternative across its two: pattern, alternative count, description, type,
+    // disposition.
+    assert_eq!(store.count(RecordKind::Claim).unwrap(), 25);
+    assert_eq!(store.count(RecordKind::Entity).unwrap(), 1);
+    assert_eq!(store.count(RecordKind::Relationship).unwrap(), 1);
+    // Five unrepresentable indicators, plus the edge that pointed at one of them.
+    assert_eq!(report.rejected, 6, "{report:?}");
+}
+
+/// A disjunctive indicator is how feeds spell a published address list. Every alternative becomes
+/// its own observable, or most of a STIX feed goes unread.
+#[test]
+fn a_disjunctive_indicator_contributes_every_alternative() {
+    let report = prepare(INDICATORS.as_bytes());
+
+    for value in ["198.51.100.20", "198.51.100.21"] {
+        assert!(
+            !claims_about(&report, &ipv4(value)).is_empty(),
+            "`{value}` was not represented"
+        );
+    }
+}
+
+/// The trade the fan-out makes, kept visible rather than paid silently. The publisher said one of
+/// these matched; Brolga records a claim about each. Both the whole pattern and the alternative
+/// count ride on every claim, so a consumer can tell a lone assertion from one of fifty without
+/// re-parsing anything.
+#[test]
+fn a_fanned_out_claim_carries_the_hedge_it_came_from() {
+    use brolga_model::Assertion;
+
+    let report = prepare(INDICATORS.as_bytes());
+    let about = claims_about(&report, &ipv4("198.51.100.20"));
+
+    assert!(
+        about.iter().any(|claim| matches!(
+            &claim.assertion,
+            Assertion::Attribute { name, value }
+                if name.as_str() == "stix.indicator.alternatives" && value.as_str() == "2"
+        )),
+        "the alternative count is missing: {about:?}"
+    );
+    assert!(
+        about.iter().any(|claim| matches!(
+            &claim.assertion,
+            Assertion::Attribute { name, value }
+                if name.as_str() == "stix.indicator.pattern" && value.as_str().contains(" OR ")
+        )),
+        "the disjunction is not readable from the claim"
+    );
+}
+
+/// An ordinary indicator must not carry the count. Writing `1` on the overwhelming majority of
+/// claims would make the field noise instead of a signal about the rare case.
+#[test]
+fn a_single_observable_indicator_carries_no_alternative_count() {
+    use brolga_model::Assertion;
+
+    let report = prepare(INDICATORS.as_bytes());
+    assert!(
+        !claims_about(&report, &ipv4("203.0.113.42"))
+            .iter()
+            .any(|claim| matches!(
+                &claim.assertion,
+                Assertion::Attribute { name, .. } if name.as_str() == "stix.indicator.alternatives"
+            )),
+    );
+}
+
+/// A publisher's own words about an indicator are evidence an analyst reads. Dropping them keeps
+/// the observable and loses the reason it was published.
+#[test]
+fn an_indicators_name_and_description_are_kept_as_evidence() {
+    use brolga_model::Assertion;
+
+    let report = prepare(INDICATORS.as_bytes());
+
+    let named = claims_about(&report, &ipv4("203.0.113.42"));
+    assert!(
+        named.iter().any(|claim| matches!(
+            &claim.assertion,
+            Assertion::Attribute { name, value }
+                if name.as_str() == "stix.indicator.name" && value.as_str() == "C2 address"
+        )),
+        "{named:?}"
+    );
+
+    let described = claims_about(&report, &ipv4("198.51.100.20"));
+    assert!(
+        described.iter().any(|claim| matches!(
+            &claim.assertion,
+            Assertion::Attribute { name, value }
+                if name.as_str() == "stix.indicator.description"
+                    && value.as_str().contains("one loader")
+        )),
+        "{described:?}"
+    );
+}
+
+/// `pattern_version` is the version of the *patterning language*. A future major version may give
+/// the same characters a different meaning, so reading it under the 2.x grammar would answer
+/// confidently about a syntax Brolga does not know.
+#[test]
+fn a_pattern_declaring_a_future_language_version_is_quarantined() {
+    let report = prepare(INDICATORS.as_bytes());
+    let rejection = report
+        .rejected
+        .iter()
+        .find(|record| record.reason_kind == "unsupported_pattern_version")
+        .expect("the 3.0 pattern is quarantined");
+
+    assert!(rejection.reason.contains("3.0"), "{}", rejection.reason);
+    assert!(
+        claims_about(&report, &ipv4("198.51.100.30")).is_empty(),
+        "it was read under the 2.x grammar anyway"
+    );
+}
+
+/// A publisher who wrote `valid_until` before `valid_from` did not mean "no window". Dropping the
+/// pair silently would store the indicator as though it applied forever.
+#[test]
+fn an_impossible_validity_window_quarantines_the_indicator_rather_than_dropping_the_field() {
+    let bundle = serde_json::json!({
+        "type": "bundle",
+        "id": "bundle--backwards",
+        "objects": [{
+            "type": "indicator",
+            "spec_version": "2.1",
+            "id": "indicator--backwards",
+            "pattern_type": "stix",
+            "pattern": "[ipv4-addr:value = '203.0.113.42']",
+            "valid_from": "2024-12-31T00:00:00Z",
+            "valid_until": "2024-01-01T00:00:00Z"
+        }]
+    });
+    let report = prepare(&serde_json::to_vec(&bundle).unwrap());
+
+    assert_eq!(report.records.len(), 0);
+    assert_eq!(report.rejected[0].reason_kind, "impossible_validity_window");
+}
+
+/// One object no longer means one record, so the amplification an indicator can cause is bounded.
+/// Truncating the list instead would drop assessments the publisher made, without saying so.
+#[test]
+fn an_indicator_stating_more_types_than_the_limit_is_refused_rather_than_truncated() {
+    use brolga_ingest::formats::stix::MAX_INDICATOR_TYPES;
+
+    let types: Vec<String> = (0..=MAX_INDICATOR_TYPES)
+        .map(|index| format!("malicious-activity-{index}"))
+        .collect();
+    let bundle = serde_json::json!({
+        "type": "bundle",
+        "id": "bundle--verbose",
+        "objects": [{
+            "type": "indicator",
+            "spec_version": "2.1",
+            "id": "indicator--verbose",
+            "pattern_type": "stix",
+            "pattern": "[ipv4-addr:value = '203.0.113.42']",
+            "indicator_types": types
+        }]
+    });
+    let report = prepare(&serde_json::to_vec(&bundle).unwrap());
+
+    assert_eq!(report.records.len(), 0);
+    assert_eq!(report.rejected[0].reason_kind, "indicator_types_exceeded");
+    assert!(
+        report.rejected[0].reason.contains("rather than truncated"),
+        "{}",
+        report.rejected[0].reason
+    );
 }
