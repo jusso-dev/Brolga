@@ -1,6 +1,6 @@
 # Brolga roadmap
 
-Status: `v0.1.0 — Foundation` and `v0.2.0 — Core ingestion` are complete; `v0.3.0` has not started. Parsers exist as library code — `brolga ingest` still exits `5`, and the command surface is #34. GitHub milestones and issues are the source of work status.
+Status: `v0.1.0 — Foundation`, `v0.2.0 — Core ingestion`, and `v0.3.0 — Intelligence graph` are complete; `v0.4.0` has not started. `brolga ingest`, `stats`, `show`, `sources`, and `quarantine` work; the graph layer is library code with no command reaching it, which is #34. GitHub milestones and issues are the source of work status.
 
 ## Release sequence
 
@@ -122,11 +122,79 @@ published them.
 **Not claimed.** `brolga ingest` exits `5`. Every parser is library code and no CLI command drives
 one; the command surface is #34, in `v0.5.0`.
 
-### v0.3.0 — Intelligence graph
+### v0.3.0 — Intelligence graph — complete
 
 Persist entities, relationships, claims, sightings, provenance, deduplication decisions, resolution candidates, contradictions, temporal state, confidence components, safe traversal, and checkpoints.
 
 Exit gate: every merge, duplicate, contradiction, confidence change, and graph delta is deterministic and explainable.
+
+#### Exit gate: demonstrated
+
+Each clause, and the test that holds it. As with `v0.1.0` and `v0.2.0`, every claim below is a test
+that exists rather than a description of intent.
+
+**"Every merge … is deterministic and explainable."**
+
+A merge requires a `Decisive` signal, and no name-based matcher can produce one — so "never merge on
+name similarity alone" holds by construction rather than by a check somebody could forget. Decisive
+means identity an external authority assigned: the same canonical identifier, the same external
+identifier in the same namespace, or an alias somebody declared and signed. `"Lazarus"` the actor and
+`"Lazarus"` the malware family are both real, and a merge is close to irreversible in practice once
+claims and sightings are attributed to one identity.
+
+An analyst rejection outranks even a decisive signal and is symmetric, so the next import cannot
+re-propose the merge with its arguments swapped. Actor and policy context are preconditions on every
+manual operation, a refused operation is not recorded at all, and withdrawal is a recorded operation
+rather than a deletion. Merges take the **union** of markings, never the intersection — merging AMBER
+into CLEAR and keeping CLEAR would silently declassify the evidence.
+
+**"Every duplicate … is deterministic and explainable."**
+
+Five verdicts, of which exactly one increases corroboration — asserted by a test, because a second
+one appearing later would inflate every downstream score invisibly. The rule that does most of the
+work: byte-identical content from two publishers is a **copy, not corroboration**, because two
+analysts writing independently do not produce identical whitespace, field order, and timestamps. One
+upstream mirrored by five aggregators stays a single source. Updates append rather than overwrite.
+
+**"Every contradiction … is deterministic and explainable."**
+
+Narrative claims are never compared, nor are claims in different predicate slots or about different
+subjects — three tests, because #21's non-goals forbid fuzzy matching and #22 must not smuggle one
+in. A contested claim is penalised rather than suppressed, and the report keeps the pairs that agreed
+alongside the pairs that conflicted. A publisher revising or withdrawing its own claim is not a
+contradiction.
+
+Attribute contradictions detect **nothing by default**: shipping a guessed list of single-valued
+attributes would be inventing intelligence, so they require an operator declaration.
+
+**"Every confidence change … is deterministic and explainable."**
+
+Every component carries a score, a weight, and a reason, and the overall figure is the weighted mean
+of the components it lists. A mirrored feed scores as one source, wired to the deduplicator's
+judgement rather than to a second opinion. An analyst override replaces the figure and leaves what
+the sources support intact, recorded as its own row with its actor and authority.
+
+Decay owns freshness outright — `confidence` delegates rather than keeping a second notion of what
+"old" means. Standing never rises with age, swept across eight half-lives and six floors at every age
+to five half-lives, and **nothing decays to nought**: an indicator that has aged out was observed by
+somebody, and one that was never asserted was not. Retuning a half-life makes stored confidence
+figures stale exactly as retuning a weight does.
+
+**"Every graph delta is deterministic and explainable."**
+
+Material state is eight named facets, and what is excluded is written down with a reason and walked
+by a test — the observation window above all, because "we saw it again" is not "something changed".
+A no-op re-import produces an **empty** delta. Traversal is held to depth, node, edge, and fan-out
+budgets plus a cancellation token, and reports which one stopped it, because a truncated
+neighbourhood looks exactly like a small one. Search takes typed predicates and never a
+caller-composed string; a SQL payload in a record's name is stored and traversed as content.
+
+Checkpoints survive the process that took them, and a delta against a reloaded baseline equals one
+against the in-memory original.
+
+**Not claimed.** No command reaches any of this. `brolga-cli` does not depend on `brolga-graph`, so
+the graph layer is a Rust library and nothing else — that is #34, in `v0.5.0`. `brolga context`
+still exits `5`.
 
 ### v0.4.0 — Compression engine
 

@@ -55,6 +55,16 @@ quarantined      2 distinct, 2 occurrence(s)
 retained originals, and `brolga quarantine --source <digest>` shows what was refused and why. Every
 command takes `--output json`, which puts exactly one object on stdout so it pipes into `jq`.
 
+**`v0.3.0 — Intelligence graph` is complete.** Deduplication that tells a syndicated copy from
+independent corroboration, entity resolution that refuses to merge on a name, contradiction
+detection with explainable confidence components, configurable temporal decay, bounded traversal and
+typed search, and checkpoints with material deltas. Every decision it makes is a record carrying what
+was compared, which algorithm and version decided it, and why.
+
+**None of the graph layer is reachable from a command.** `brolga-cli` does not depend on
+`brolga-graph`: it is a Rust library and nothing else until [#34](https://github.com/jusso-dev/Brolga/issues/34)
+in `v0.5.0`.
+
 **`brolga context` still exits `5`.** The compression engine is `v0.4.0`. There is no HTTP API, no
 MCP server, no connector, and nothing fetches a feed on a schedule — ingestion reads files you give
 it. This README will not pretend otherwise.
