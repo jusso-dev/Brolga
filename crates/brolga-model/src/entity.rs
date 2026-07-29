@@ -78,6 +78,17 @@ pub enum EntityKind {
     /// Brolga stores rules; it does not run them. Nothing in the canonical model evaluates a
     /// condition, matches a string, or executes a query.
     DetectionRule,
+    /// A named piece of software at a version, such as a library or a container image.
+    ///
+    /// Distinct from [`Self::Asset`], which is something in the operator's own environment, and
+    /// from [`Self::Tool`], which is an instrument somebody wields. `log4j-core 2.14.1` is neither:
+    /// it is a thing that exists in the world, appears in thousands of environments, and has
+    /// vulnerabilities of its own.
+    ///
+    /// Keyed on a package URL where one exists, because a purl already encodes ecosystem, name, and
+    /// version in a form the whole industry agrees on — and two SBOMs describing one dependency
+    /// must not become two packages.
+    SoftwarePackage,
 }
 
 impl EntityKind {
@@ -104,6 +115,7 @@ impl EntityKind {
             Self::Location,
             Self::Sector,
             Self::DetectionRule,
+            Self::SoftwarePackage,
         ]
     }
 
@@ -126,6 +138,7 @@ impl EntityKind {
             Self::Location => "location",
             Self::Sector => "sector",
             Self::DetectionRule => "detection_rule",
+            Self::SoftwarePackage => "software_package",
         }
     }
 }
@@ -173,11 +186,11 @@ impl Identifiable for Entity {
 
 impl VersionedSchema for Entity {
     const SCHEMA_NAME: &'static str = "brolga.entity";
-    // Bumped for `EntityKind::DetectionRule`. Adding a variant to a `#[non_exhaustive]` enum is
+    // Bumped for `EntityKind::DetectionRule` and `EntityKind::SoftwarePackage`. Adding a variant to a `#[non_exhaustive]` enum is
     // additive, so it is a minor change by the rule in `VersionedSchema`: an older consumer meets a
     // discriminator it does not know, which is the case `#[non_exhaustive]` exists to make handled
     // rather than fatal. No field was removed, renamed, retyped, or made required.
-    const SCHEMA_MINOR: u16 = 1;
+    const SCHEMA_MINOR: u16 = 2;
 }
 
 impl Entity {
@@ -371,7 +384,7 @@ mod tests {
         assert_eq!(
             json.get("schema_version")
                 .and_then(serde_json::Value::as_str),
-            Some("brolga.entity/1.1"),
+            Some("brolga.entity/1.2"),
         );
         // Empty, but present: a reader must never be able to mistake absence for "unrestricted".
         assert_eq!(json.get("markings"), Some(&serde_json::json!([])));
@@ -529,10 +542,11 @@ mod all_variants_tests {
                 | EntityKind::Asset
                 | EntityKind::Location
                 | EntityKind::Sector
-                | EntityKind::DetectionRule => {}
+                | EntityKind::DetectionRule
+                | EntityKind::SoftwarePackage => {}
             }
         }
-        assert_eq!(EntityKind::all().len(), 15);
+        assert_eq!(EntityKind::all().len(), 16);
 
         let mut names: Vec<_> = EntityKind::all().iter().map(|k| k.as_str()).collect();
         names.sort_unstable();

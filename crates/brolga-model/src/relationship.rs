@@ -101,6 +101,12 @@ pub enum RelationshipKind {
     /// requires that every merge decision stay inspectable, which means recording the claim rather
     /// than silently collapsing two records into one.
     DuplicateOf,
+    /// A vulnerability affects a software package, or a package is affected by one.
+    ///
+    /// Directional and typed rather than `RelatedTo`, because "affects" is the question every
+    /// consumer of vulnerability data actually asks, and answering it by filtering a generic edge
+    /// means every consumer reimplements the filter.
+    Affects,
     /// The source is connected to the target in a way none of the above expresses.
     ///
     /// Not a fallback for a relationship that has a proper kind. It records that a source asserted
@@ -130,6 +136,7 @@ impl RelationshipKind {
             Self::DerivedFrom => "derived_from",
             Self::Supersedes => "supersedes",
             Self::DuplicateOf => "duplicate_of",
+            Self::Affects => "affects",
             Self::RelatedTo => "related_to",
         }
     }
