@@ -270,6 +270,102 @@ jobs:
   # a passing one. A skipped needs-dependency reports "skipped", which this job turns into a
   # failure.
   # ---------------------------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------------------------
+  # Fuzz harness: prove it compiles and that the checked-in corpus still goes through it.
+  #
+  # `cargo fuzz` needs nightly, so a stable-only pipeline would check nothing about the harness —
+  # not that it builds, not that the corpus is readable, not that the oracles hold. A fuzzing
+  # harness nobody exercises is a broken one, which is the normal state of most of them.
+  #
+  # So this job runs on stable and replays every seed through the same entry points the fuzz targets
+  # call. `fuzz-nightly` below additionally builds the real libFuzzer binaries and runs them briefly.
+  #
+  # Failures name the seed and its byte length and never its content: a corpus seed is by
+  # construction a hostile input, and a crash report carrying one is a working exploit published in
+  # a log anybody can read. libFuzzer writes the crashing input to its own artefact file, which is
+  # where it belongs.
+  # ---------------------------------------------------------------------------------------------
+  fuzz-harness:
+    name: Fuzz harness and corpus
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.1
+      # The harness is outside the workspace, so it needs its own manifest path. `--locked` is not
+      # passed: the fuzz crate has no committed lockfile, deliberately, so that `libfuzzer-sys` and
+      # its C toolchain never enter the shipped one.
+      - name: Replay the seed corpus through every fuzz entry point
+        run: cargo test --manifest-path fuzz/Cargo.toml
+      - name: Check the harness builds with its fuzzing feature enabled
+        run: cargo check --manifest-path fuzz/Cargo.toml --features fuzzing
+
+  # ---------------------------------------------------------------------------------------------
+  # Fuzz, briefly, on nightly. Bounded so it cannot become the job that makes CI unusable.
+  #
+  # #56 requires resource-exhaustion tests to have bounded CI profiles: each target runs for a fixed
+  # wall-clock budget seeded from the checked-in corpus, rather than until it finds something. This
+  # is a regression check, not a fuzzing campaign — a real campaign runs for hours on a machine
+  # nobody is waiting for.
+  #
+  # `continue-on-error` is deliberately **absent**. A crash found here is a bug, and a job that goes
+  # green on one would be worse than no job.
+  # ---------------------------------------------------------------------------------------------
+  fuzz-nightly:
+    name: Fuzz (bounded)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: nightly
+          components: rust-src
+      - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.1
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+      # `--features fuzzing` is required: the fuzz binaries carry `required-features = ["fuzzing"]`
+      # so that the stable corpus replay does not have to build `libfuzzer-sys`. Without it,
+      # `cargo fuzz build` matches no binaries and **succeeds** — a gate that passes by doing nothing,
+      # which is why the existence check below is not redundant.
+      - name: Build every target
+        run: cargo fuzz build --features fuzzing
+      - name: Check the build actually produced every binary
+        run: |
+          set -euo pipefail
+          built="fuzz/target/x86_64-unknown-linux-gnu/release"
+          missing=0
+          for target in ingest_any canonicalise stix_pattern mapping_document export_escaping; do
+            if [ ! -x "$built/$target" ]; then
+              echo "::error::fuzz target \`$target\` was not built" >&2
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
+      # Sixty seconds per target, seeded from the checked-in corpus. `-runs` is not capped as well:
+      # a wall-clock bound is the one that keeps the job's cost predictable on a shared runner.
+      - name: Run each target against the corpus
+        run: |
+          set -euo pipefail
+          for target in ingest_any canonicalise stix_pattern mapping_document export_escaping; do
+            echo "::group::$target"
+            cargo fuzz run --features fuzzing "$target" \
+              crates/brolga-ingest/tests/fixtures/fuzz-seeds \
+              -- -max_total_time=60 -max_len=8192
+            echo "::endgroup::"
+          done
+      # A crash leaves an artefact under `fuzz/artifacts/`. Uploaded rather than printed, because the
+      # bytes must not reach a public log — see the note on `fuzz-harness`.
+      - name: Upload crash artefacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
+          retention-days: 7
+          if-no-files-found: ignore
+
   ci-passed:
     name: CI passed
     if: always()
@@ -283,6 +379,7 @@ jobs:
       - supply-chain
       - lockfile
       - smoke
+      - fuzz-harness
     steps:
       - name: Fail unless every job succeeded
         run: |
