@@ -155,6 +155,11 @@ pub(crate) enum Command {
     /// Import intelligence from one or more files.
     Ingest(IngestArgs),
 
+    /// Retrieve intelligence from a remote server.
+    ///
+    /// Read-only. Brolga never publishes to an upstream platform.
+    Fetch(FetchArgs),
+
     /// Show what is in the store.
     Stats(DatabaseArgs),
 
@@ -241,6 +246,67 @@ pub(crate) struct DatabaseArgs {
     /// Where the database lives.
     #[arg(long, default_value = "brolga.sqlite")]
     pub(crate) database: PathBuf,
+}
+
+/// `brolga fetch`.
+#[derive(Debug, Args)]
+pub(crate) struct FetchArgs {
+    /// The TAXII server's base URL.
+    ///
+    /// Discovery is attempted at `/taxii2/` and then `/taxii/`, so the base is what to give here
+    /// rather than either path.
+    pub(crate) url: String,
+
+    /// Which collection to read. Repeatable.
+    ///
+    /// Omitted means every readable collection the server offers, which is what an operator
+    /// syncing a whole server wants and is a large enough action to be worth spelling out rather
+    /// than reaching by default from a bare command.
+    #[arg(long = "collection")]
+    pub(crate) collections: Vec<String>,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+
+    /// Objects to request per page.
+    #[arg(long, default_value_t = 100)]
+    pub(crate) page_size: usize,
+
+    /// Stop after this many pages per collection.
+    ///
+    /// A server can always claim more pages remain. A run stopped by this bound reports `partial`
+    /// rather than `complete`, so "stopped early" never reads as "up to date".
+    #[arg(long, default_value_t = 1000)]
+    pub(crate) max_pages: usize,
+
+    /// Permit connections to private and loopback addresses.
+    ///
+    /// Off by default. This is the SSRF control: an operator with an internal TAXII server sets it
+    /// deliberately. It does **not** permit the cloud metadata address, which stays refused
+    /// regardless — enabling internal fetches almost never means "and also let a feed read my
+    /// instance credentials".
+    #[arg(long)]
+    pub(crate) allow_private: bool,
+
+    /// Permit plaintext HTTP.
+    ///
+    /// Off by default. A TAXII request carries a credential and describes what an organisation is
+    /// investigating; both are worth protecting in transit.
+    #[arg(long)]
+    pub(crate) allow_http: bool,
+
+    /// Ignore the stored entity tag and re-fetch regardless.
+    #[arg(long)]
+    pub(crate) no_etag: bool,
+
+    /// List what the server offers and stop, without fetching or storing anything.
+    #[arg(long)]
+    pub(crate) discover_only: bool,
+
+    /// Stop after this many seconds.
+    #[arg(long)]
+    pub(crate) timeout_seconds: Option<u64>,
 }
 
 /// `brolga serve`.
@@ -458,6 +524,7 @@ impl Command {
     pub(crate) const fn planned_milestone(&self) -> Option<&'static str> {
         match self {
             Self::Ingest(_) => Some("v0.2.0 — Core ingestion"),
+            Self::Fetch(_) => Some("v0.6.0 — Connectors"),
             Self::Context(_) => Some("v0.4.0 — Compression engine"),
             _ => None,
         }
@@ -472,6 +539,7 @@ impl Command {
             Self::Config(_) => "config",
             Self::ExitCodes => "exit-codes",
             Self::Ingest(_) => "ingest",
+            Self::Fetch(_) => "fetch",
             Self::Stats(_) => "stats",
             Self::Show(_) => "show",
             Self::Quarantine(_) => "quarantine",

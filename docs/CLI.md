@@ -3,7 +3,7 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
+`ingest`, `fetch`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
 `completion` are implemented. `context` is not, and exits `5`.
 
 `brolga completion <shell>` prints a completion script generated from **this build's** command tree,
@@ -262,3 +262,78 @@ else
   esac
 fi
 ```
+
+## `brolga fetch`
+
+Retrieve intelligence from a remote TAXII 2.0 or 2.1 server. Read-only: Brolga never publishes to
+an upstream platform, and the transport has no method that sends a body.
+
+```bash
+brolga fetch https://taxii.example.org \
+    --collection 91a7b528-80eb-42ed-a74d-c6fbd5a26116
+```
+
+Discovery is attempted at `/taxii2/` and then `/taxii/`, so give the **base URL** rather than
+either path. The version is agreed from the `Content-Type` the server answers with, not guessed
+from the body: a 2.1 envelope and a 2.0 bundle are distinguishable most of the time, and a client
+that is usually right about which protocol it speaks mis-paginates the rest of the time.
+
+Omitting `--collection` reads every collection the server marks readable. Naming one the server
+does not offer is an error rather than an empty run, because the operator has a typo or the wrong
+server and a silent success hides both.
+
+`--discover-only` lists what a server offers and stops, storing nothing.
+
+### What it refuses, and how to permit it
+
+Outbound requests run under the same network policy the rest of Brolga uses. By default:
+
+| Refused | Flag to permit |
+| --- | --- |
+| Plaintext HTTP | `--allow-http` |
+| Private, loopback, and link-local addresses | `--allow-private` |
+| The cloud metadata address `169.254.169.254` | **no flag** |
+| A redirect that downgrades HTTPS to HTTP | no flag |
+| More than three redirect hops | no flag |
+
+The metadata address has no flag on purpose. Enabling internal fetches is not the same request as
+"let a feed read my instance credentials", and a flag that permitted it would eventually be pasted
+out of a forum post. Redirects are followed by Brolga rather than by the HTTP agent, and every hop
+is re-checked — an agent that follows them internally connects before any check runs, which makes
+the whole control decorative.
+
+A refusal exits `2` (usage) and a server failure exits `6` (I/O), because one is a decision to
+revisit and the other is somebody else's outage. A storage failure exits `4` and a timeout `8`.
+
+### Credentials
+
+Read from `BROLGA_TAXII_TOKEN`, never from a flag. A credential on a command line is in the shell
+history, in `ps` output, and in any process listing the machine keeps. The `Bearer ` prefix is
+added if it is not already there.
+
+```bash
+BROLGA_TAXII_TOKEN=abc123 brolga fetch https://taxii.example.org
+```
+
+No error message, log line, or stored record carries the token.
+
+### Resuming
+
+Each collection has a cursor keyed on `(connector, collection id)` — not on the URL, so a server
+that moves hostname is still the same feed and does not restart from the beginning. A run sends the
+stored `added_after` and, unless `--no-etag` is given, the stored `ETag`; a `304` costs a round trip
+instead of a body.
+
+**The cursor never moves ahead of stored data.** A page is fetched, ingested, and only then does the
+cursor advance, both inside one transaction. A malformed page therefore leaves the cursor where the
+last good page put it and the next run re-fetches that window — the reverse ordering would skip it
+permanently and report nothing, because the following run would simply start after the gap.
+
+A run stopped by `--max-pages`, by `--timeout-seconds`, or by a failure reports `partial` or
+`failed` rather than a count that looks like success:
+
+```
+91a7b528…  4 page(s), 384 object(s), 372 stored, 12 quarantined — partial
+```
+
+`complete` and `not_modified` are the only statuses that mean the feed has nothing outstanding.
