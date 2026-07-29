@@ -1,0 +1,5 @@
+{"domain":"evil.example","seen":"2024-05-01"}
+{"ip":"192.0.2.10","seen":"2024-05-02"}
+{"url":"https://lure.example/Login"}
+{"domain":"broken.example"
+{"note":"nothing observable here"}
