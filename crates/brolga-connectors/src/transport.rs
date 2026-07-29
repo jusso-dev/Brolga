@@ -126,11 +126,133 @@ impl Response {
     }
 }
 
+/// A GraphQL operation Brolga is willing to send.
+///
+/// The point of this type is what it *cannot* represent. There is no constructor taking a `String`,
+/// so a caller cannot supply GraphQL — every document is a `&'static str` compiled into Brolga, and
+/// adding one is a source change rather than configuration.
+///
+/// [ADR 0006](https://github.com/jusso-dev/Brolga/blob/main/docs/adr/0006-a-closed-set-of-query-bodies.md)
+/// records why the guarantee changed shape here: before it, no body could be sent at all; now only
+/// bodies Brolga's own source contains can be, and none of them is a mutation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum QueryOperation {
+    /// OpenCTI: a page of STIX objects, newest-modified first.
+    OpenCtiStixObjects,
+    /// OpenCTI: the server's version and capabilities, used to confirm a token authenticates.
+    OpenCtiAbout,
+}
+
+impl QueryOperation {
+    /// Every operation this build can send.
+    #[must_use]
+    pub const fn all() -> &'static [Self] {
+        &[Self::OpenCtiStixObjects, Self::OpenCtiAbout]
+    }
+
+    /// The GraphQL document.
+    #[must_use]
+    pub const fn document(self) -> &'static str {
+        match self {
+            Self::OpenCtiStixObjects => OPENCTI_STIX_OBJECTS,
+            Self::OpenCtiAbout => OPENCTI_ABOUT,
+        }
+    }
+
+    /// A stable name, for a diagnostic.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OpenCtiStixObjects => "opencti.stixObjects",
+            Self::OpenCtiAbout => "opencti.about",
+        }
+    }
+}
+
+/// A page of STIX objects, ordered by modification time so a cursor over it is monotonic.
+const OPENCTI_STIX_OBJECTS: &str = "\
+query BrolgaStixObjects($first: Int!, $after: ID, $since: Any) {
+  stixCoreObjects(
+    first: $first
+    after: $after
+    orderBy: modified
+    orderMode: asc
+    filters: { mode: and, filterGroups: [], filters: [
+      { key: \"modified\", values: [$since], operator: gt }
+    ] }
+  ) {
+    pageInfo { endCursor hasNextPage }
+    edges { node { id standard_id entity_type created_at updated_at toStix } }
+  }
+}";
+
+/// The server's identity, used to confirm a token authenticates before any paging begins.
+const OPENCTI_ABOUT: &str = "\
+query BrolgaAbout {
+  about { version }
+}";
+
+/// A query a connector wants to run.
+///
+/// Carries a [`QueryOperation`] rather than a document, so caller-supplied GraphQL is
+/// unrepresentable. Variables are JSON and *are* caller-supplied — they are values, and the server
+/// treats them as values, which is the whole reason a parameterised query is safer than an
+/// interpolated one.
+#[derive(Debug, Clone)]
+pub struct QueryRequest<'a> {
+    /// The endpoint.
+    pub url: &'a str,
+    /// Which compiled-in operation to run.
+    pub operation: QueryOperation,
+    /// The operation's variables.
+    pub variables: serde_json::Value,
+    /// An `Authorization` header value, if the server needs one.
+    pub authorization: Option<SensitiveText>,
+}
+
+impl<'a> QueryRequest<'a> {
+    /// Build one.
+    #[must_use]
+    pub const fn new(
+        url: &'a str,
+        operation: QueryOperation,
+        variables: serde_json::Value,
+    ) -> Self {
+        Self {
+            url,
+            operation,
+            variables,
+            authorization: None,
+        }
+    }
+
+    /// The same request, carrying a credential.
+    #[must_use]
+    pub fn with_authorization(mut self, authorization: Option<SensitiveText>) -> Self {
+        self.authorization = authorization;
+        self
+    }
+
+    /// The JSON body this request sends.
+    #[must_use]
+    pub fn body(&self) -> Vec<u8> {
+        serde_json::json!({
+            "query": self.operation.document(),
+            "variables": self.variables,
+        })
+        .to_string()
+        .into_bytes()
+    }
+}
+
 /// How a connector retrieves bytes.
 ///
-/// One method, and no way to send a body. A protocol client holds a `&dyn Transport` and therefore
-/// cannot open a socket itself, which is what makes the policy in [`PolicyTransport`] the only
-/// outbound path rather than the usual one.
+/// A protocol client holds a `&dyn Transport` and therefore cannot open a socket itself, which is
+/// what makes the policy in [`PolicyTransport`] the only outbound path rather than the usual one.
+///
+/// [`Self::fetch_query`] is the one method that sends a body, and the set of bodies it can send is
+/// closed — see [`QueryOperation`] and ADR 0006.
 pub trait Transport: Send + Sync {
     /// Fetch a URL.
     ///
@@ -140,6 +262,15 @@ pub trait Transport: Send + Sync {
     /// to, or a redirect; [`ConnectorError::Transport`] for a network failure; and
     /// [`ConnectorError::ResponseTooLarge`] for a body over [`MAX_RESPONSE_BYTES`].
     fn fetch(&self, request: &Request) -> Result<Response, ConnectorError>;
+
+    /// Run one of the compiled-in queries.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::fetch`], plus [`ConnectorError::Transport`] if the endpoint answers a query with
+    /// a redirect — which is refused rather than followed, because re-posting a body to a location
+    /// a server chose is how a query aimed at a configured endpoint ends up delivered elsewhere.
+    fn fetch_query(&self, request: &QueryRequest<'_>) -> Result<Response, ConnectorError>;
 }
 
 /// The transport that actually connects, with [`NetworkPolicy`] applied per request and per hop.
@@ -307,8 +438,96 @@ impl Transport for PolicyTransport {
             });
         }
     }
-}
 
+    fn fetch_query(&self, request: &QueryRequest<'_>) -> Result<Response, ConnectorError> {
+        // The same checks as `fetch`, on the same policy. This is a second method on one audited
+        // type, not a second outbound path.
+        self.check_url(request.url)?;
+
+        let body = request.body();
+        let mut call = self
+            .agent
+            .post(request.url)
+            .header("Content-Type", "application/json")
+            .header("Accept", "application/json")
+            .header("User-Agent", concat!("brolga/", env!("CARGO_PKG_VERSION")));
+
+        if let Some(authorization) = &request.authorization {
+            call = call.header("Authorization", authorization.expose());
+        }
+
+        let response = match call.send(&body) {
+            Ok(response) => response,
+            Err(ureq::Error::StatusCode(code)) => {
+                return Ok(Response {
+                    status: code,
+                    content_type: String::new(),
+                    etag: None,
+                    content_range: None,
+                    body: Vec::new(),
+                    final_url: request.url.to_owned(),
+                });
+            }
+            Err(error) => {
+                return Err(ConnectorError::Transport {
+                    url: request.url.to_owned(),
+                    reason: error.to_string(),
+                });
+            }
+        };
+
+        let status = response.status().as_u16();
+
+        // Refused, not followed. Re-posting a body to a location a server chose is how a query
+        // aimed at a configured endpoint ends up delivered somewhere else, and no legitimate
+        // GraphQL endpoint answers a query with a redirect.
+        if matches!(status, 301 | 302 | 303 | 307 | 308) {
+            return Err(ConnectorError::Transport {
+                url: request.url.to_owned(),
+                reason: format!(
+                    "the endpoint answered {status} to a query; Brolga does not re-send a request \
+                     body to a location the server chose"
+                ),
+            });
+        }
+
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .map(ToOwned::to_owned)
+            .unwrap_or_default();
+
+        let mut body = Vec::new();
+        let mut reader = response.into_body().into_reader().take(
+            u64::try_from(MAX_RESPONSE_BYTES)
+                .unwrap_or(u64::MAX)
+                .saturating_add(1),
+        );
+        reader
+            .read_to_end(&mut body)
+            .map_err(|error| ConnectorError::Transport {
+                url: request.url.to_owned(),
+                reason: error.to_string(),
+            })?;
+
+        if body.len() > MAX_RESPONSE_BYTES {
+            return Err(ConnectorError::ResponseTooLarge {
+                url: request.url.to_owned(),
+                limit: MAX_RESPONSE_BYTES,
+            });
+        }
+
+        Ok(Response {
+            status,
+            content_type,
+            etag: None,
+            content_range: None,
+            body,
+            final_url: request.url.to_owned(),
+        })
+    }
+}
 /// Split a URL into its scheme, host, and port, without a URL-parsing dependency.
 ///
 /// Deliberately strict. Anything it cannot read confidently is an error rather than a best guess,

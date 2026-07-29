@@ -35,6 +35,7 @@ use brolga_storage::{ConnectorCursor, CursorStatus, IntelligenceStore, SqliteSto
 
 use crate::error::ConnectorError;
 use crate::misp::{MISP_CONNECTOR, MispClient, MispFeed, MispInstance};
+use crate::opencti::{OPENCTI_CONNECTOR, OpenCtiClient, OpenCtiInstance};
 use crate::taxii::TaxiiClient;
 
 /// This connector's name, and the first half of every cursor key it writes.
@@ -563,6 +564,163 @@ pub fn sync_misp_feed(
 
         page_number = page_number.saturating_add(1);
         etag = None;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// OpenCTI
+// ---------------------------------------------------------------------------------------------
+
+/// Poll one OpenCTI instance to completion, or to a bound.
+///
+/// The same ordering as every other connector here: fetch, ingest, then advance the cursor. See the
+/// module documentation.
+///
+/// # Errors
+///
+/// Returns the first failure. The cursor is left wherever the last successfully stored page put it.
+pub fn sync_opencti(
+    client: &OpenCtiClient<'_>,
+    store: &mut SqliteStore,
+    pipeline: &Pipeline,
+    instance: &OpenCtiInstance,
+    now: Timestamp,
+    options: SyncOptions,
+    cancel: &CancellationToken,
+) -> Result<SyncReport, ConnectorError> {
+    let stamp = now.to_rfc3339();
+    let feed_key = instance.feed_key();
+
+    let mut cursor = store
+        .connector_cursor(OPENCTI_CONNECTOR, &feed_key)
+        .map_err(|error| ConnectorError::Storage {
+            url: instance.base_url.clone(),
+            reason: error.to_string(),
+        })?
+        .unwrap_or_else(|| ConnectorCursor::starting(OPENCTI_CONNECTOR, &feed_key, &stamp));
+
+    let mut report = SyncReport {
+        feed: feed_key,
+        pages: 0,
+        objects: 0,
+        inserted: 0,
+        quarantined: 0,
+        cursor: cursor.clone(),
+        not_modified: false,
+    };
+
+    // The GraphQL page cursor, which is a position *within* a result set rather than a high-water
+    // mark. It is not carried between runs: a stored `after` would point into a result set the next
+    // run's `since` filter does not produce, and paging from it would skip whatever changed in
+    // between.
+    let mut after: Option<String> = None;
+
+    loop {
+        if cancel.is_cancelled() || report.pages >= options.max_pages {
+            cursor.last_status = CursorStatus::Partial;
+            cursor.last_run_at = stamp.clone();
+            persist(store, &cursor, &instance.base_url)?;
+            report.cursor = cursor;
+            return Ok(report);
+        }
+
+        let page = match client.page(
+            instance,
+            cursor.added_after.as_deref(),
+            after.as_deref(),
+            options.page_size,
+        ) {
+            Ok(page) => page,
+            Err(error) => {
+                cursor.last_status = CursorStatus::Failed;
+                cursor.last_run_at = stamp.clone();
+                let _ = persist(store, &cursor, &instance.base_url);
+                return Err(error);
+            }
+        };
+
+        report.pages = report.pages.saturating_add(1);
+        report.objects = report.objects.saturating_add(page.object_count);
+        // An object OpenCTI could not render as STIX is counted as quarantined, because that is
+        // what it is: a record the source published and Brolga did not store. Reporting it only in
+        // a log would make a half-imported page look identical to a whole one.
+        report.quarantined = report
+            .quarantined
+            .saturating_add(u64::try_from(page.unrenderable).unwrap_or(0));
+
+        if page.object_count == 0 {
+            cursor.last_status = CursorStatus::Complete;
+            cursor.last_run_at = stamp.clone();
+            persist(store, &cursor, &instance.base_url)?;
+            report.cursor = cursor;
+            return Ok(report);
+        }
+
+        let document = Document {
+            bytes: &page.body,
+            media_type: MediaType::new("application/stix+json").map_err(|error| {
+                ConnectorError::Storage {
+                    url: page.url.clone(),
+                    reason: error.to_string(),
+                }
+            })?,
+            file_name: None,
+            origin: SourceOrigin::NetworkFeed {
+                publisher: ShortText::new(bounded_publisher(&instance.name)).map_err(|error| {
+                    ConnectorError::Storage {
+                        url: page.url.clone(),
+                        reason: error.to_string(),
+                    }
+                })?,
+                location: None,
+            },
+            retrieved_at: now,
+        };
+
+        let ingested = match pipeline.ingest_batch(store, &[document], cancel) {
+            Ok(ingested) => ingested,
+            Err(error) => {
+                cursor.last_status = CursorStatus::Failed;
+                cursor.last_run_at = stamp.clone();
+                let _ = persist(store, &cursor, &instance.base_url);
+                return Err(ConnectorError::Storage {
+                    url: page.url,
+                    reason: error.to_string(),
+                });
+            }
+        };
+
+        report.inserted = report.inserted.saturating_add(ingested.inserted);
+        report.quarantined = report.quarantined.saturating_add(ingested.rejected);
+
+        // Only now.
+        if let Some(newest) = page.newest_modified {
+            cursor.added_after = Some(newest);
+        }
+        cursor.records_seen = cursor
+            .records_seen
+            .saturating_add(u64::try_from(page.object_count).unwrap_or(0));
+        cursor.last_run_at = stamp.clone();
+        cursor.last_status = if page.more {
+            CursorStatus::Partial
+        } else {
+            CursorStatus::Complete
+        };
+        persist(store, &cursor, &instance.base_url)?;
+
+        if !page.more {
+            report.cursor = cursor;
+            return Ok(report);
+        }
+
+        // A server claiming more pages without moving its cursor would loop forever.
+        let Some(next) = page.end_cursor.filter(|next| Some(next) != after.as_ref()) else {
+            cursor.last_status = CursorStatus::Partial;
+            persist(store, &cursor, &instance.base_url)?;
+            report.cursor = cursor;
+            return Ok(report);
+        };
+        after = Some(next);
     }
 }
 
