@@ -1,0 +1,23 @@
+# Everything is excluded, and the build inputs are then named.
+#
+# The usual denylist is written the other way round, and it goes stale the moment somebody adds a
+# directory: a `docs/` or a `.env` that nobody remembered to list is silently shipped into the
+# build context and, on a careless `COPY`, into the image. An allowlist fails the other way — a
+# genuinely new build input makes the build stop, which is the failure worth having.
+*
+
+!Cargo.toml
+!Cargo.lock
+!crates/
+
+# Re-excluded after the allowlist, because the last matching pattern wins. A local `target/` is
+# the single largest thing in this repository and it is useless to the builder, which compiles
+# against the pinned toolchain rather than against whatever the host last used.
+target/
+crates/**/target/
+
+# Working databases. A stray SQLite file in the context is intelligence data being copied into a
+# build, which is not something to do by accident.
+**/*.sqlite
+**/*.sqlite-wal
+**/*.sqlite-shm
