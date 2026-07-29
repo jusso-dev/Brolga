@@ -79,6 +79,74 @@ All under `/api/v1`.
 | `GET /entities` | Search. `?kind=`, `?status=`, `?current=`, `?limit=`, `?offset=` |
 | `GET /entities/{id}` | One entity, with its full provenance chain. |
 | `GET /entities/{id}/neighbours` | Relationships at that entity. `?direction=outgoing\|incoming\|both` |
+| `POST /context` | **The context pack.** What is known about one observable. |
+
+### `POST /context`
+
+The route Brolga exists for. A consumer holds one observable — an address from a firewall log, a
+hash from an endpoint detection — and asks what is known about it.
+
+```bash
+curl -s -X POST localhost:8787/api/v1/context \
+  -H 'Content-Type: application/json' \
+  -H "Authorization: Bearer $BROLGA_API_TOKEN" \
+  -d '{"subject":{"kind":"ip","value":"203.0.113.42"},"purpose":"case_enrichment"}'
+```
+
+```json
+{
+  "schema_version": "brolga.context_pack/1.0",
+  "subject": { "kind": "ipv4_address", "value": "203.0.113.42" },
+  "observable_id": "observable:7168327b-…",
+  "detail_level": "L1",
+  "disposition": "malicious",
+  "entities": [ { "id": "entity:9c8e…", "kind": "report", "name": "C2 infrastructure", "status": "active" } ],
+  "claims": [ { "predicate": "disposition", "object": "malicious", "status": "active" } ],
+  "relationships": [ { "kind": "part_of", "source": "observable:7168…", "target": "entity:9c8e…", "status": "active" } ],
+  "evidence": [ { "source_object_id": "source:12fc…" } ],
+  "gaps": [ "no sightings recorded; Brolga cannot say when this was last seen" ],
+  "exclusions": [],
+  "budget": { "requested": {}, "consumed": { "max_objects": 2, "max_relationships": 1 } }
+}
+```
+
+#### Subject kinds
+
+`ip`, `ipv4`, `ipv6`, `domain`, `hostname`, `url`, `file_hash`, `md5`, `sha1`, `sha256`, `email`.
+
+Spelling does not matter: whitespace, letter case, and IPv6 abbreviation are all normalised, and
+`ip` resolves to the same observable as `ipv4`/`ipv6`. A digest may be bare or carry its algorithm
+(`md5:d41d8…`), and a stated algorithm always beats inference from length.
+
+The pack echoes the **canonical** subject, which may differ from what you sent. Cache by that, not
+by what you asked with.
+
+#### `disposition`
+
+`malicious`, `suspicious`, `allow_listed`, `benign`, or `unknown` — the strongest *currently
+standing* disposition claimed about the subject.
+
+**`unknown` means Brolga has not heard of it. It does not mean benign.** Treating the two alike
+closes alerts that should have been raised. Withdrawn claims are ignored rather than counted, and
+an observable whose claims have all been retracted reports `unknown` and says so in `gaps`.
+
+#### `gaps` and `exclusions`
+
+`gaps` is what Brolga does not know, stated rather than left to be inferred from an empty array.
+`exclusions` is what was deliberately left out — a budget that truncated the answer says so, because
+a silently truncated pack reads as a complete one.
+
+#### Detail levels
+
+`detail_level` is accepted but only `L1` is served. The pack reports the level **actually served**
+and notes the difference in `exclusions`, so a consumer is never told it received depth it did not.
+
+#### Known limitation
+
+Observables reach Brolga through MISP attributes. Brolga's STIX parser does not map `indicator`
+objects yet — it quarantines them rather than coercing them into the nearest canonical type — so a
+STIX bundle of indicators contributes nothing a context lookup can find. Tracked in
+[#95](https://github.com/jusso-dev/Brolga/issues/95).
 
 ### Paging
 
