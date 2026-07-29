@@ -264,6 +264,7 @@ dependencies = [
  "brolga-model",
  "brolga-security",
  "brolga-storage",
+ "proptest",
  "serde",
  "serde_json",
  "tempfile",

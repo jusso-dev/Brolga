@@ -23,6 +23,7 @@ serde_json = "1.0.151"
 thiserror = "2.0.19"
 
 [dev-dependencies]
+proptest = "1.11.0"
 brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
 # Only for the test double that stands in for a concurrent import: `StoreRead` returns
 # `serde_json::Value` from its raw-document readers, so delegating them needs the type in scope.
