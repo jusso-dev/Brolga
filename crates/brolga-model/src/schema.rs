@@ -18,6 +18,7 @@ use serde_json::Value;
 use crate::claim::Claim;
 use crate::entity::Entity;
 use crate::observable::Observable;
+use crate::pack::ContextPack;
 use crate::provenance::{Provenance, SourceObject};
 use crate::relationship::Relationship;
 use crate::sighting::Sighting;
@@ -56,6 +57,7 @@ pub fn all_schemas() -> BTreeMap<&'static str, Value> {
         (Observable::SCHEMA_NAME, schema_for::<Observable>()),
         (SourceObject::SCHEMA_NAME, schema_for::<SourceObject>()),
         (Provenance::SCHEMA_NAME, schema_for::<Provenance>()),
+        (ContextPack::SCHEMA_NAME, schema_for::<ContextPack>()),
     ])
 }
 
@@ -140,12 +142,13 @@ mod tests {
             Observable::SCHEMA_NAME,
             SourceObject::SCHEMA_NAME,
             Provenance::SCHEMA_NAME,
+            ContextPack::SCHEMA_NAME,
         ] {
             assert!(published.contains(expected), "{expected} is not published");
         }
         assert_eq!(
             published.len(),
-            7,
+            8,
             "a new top-level type needs a schema here"
         );
     }
