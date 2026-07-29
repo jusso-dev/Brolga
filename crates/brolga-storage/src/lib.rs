@@ -90,8 +90,11 @@
 //!   `v1.0.0`. The traits here exist so it is a genuine alternative rather than a place where
 //!   SQLite-shaped strings happen to work.
 //! - **Graph traversal.** `docs/ARCHITECTURE.md` commits to relational adjacency with bounded
-//!   recursive queries; the adjacency indexes are in place, and the traversal that uses them is
-//!   `v0.3.0`.
+//!   recursive queries. This crate supplies the adjacency *primitives* —
+//!   [`EdgeQuery`], [`StoreRead::edges_at`], and [`StoreRead::degree`] — which read exactly one hop
+//!   and report what a hop would cost. Recursion, and the budget it is held to, belong to
+//!   `brolga-graph`: a recursive query that decides its own depth inside the database is a denial
+//!   of service with an index on it.
 //! - **Content-addressed blob retention.** [`SourceObject`](brolga_model::provenance::SourceObject)
 //!   metadata is stored; the bytes it addresses are a later milestone's problem.
 //! - **A query language.** Structured, safe queries arrive in `v1.0.0` and compile to these traits.
@@ -116,5 +119,6 @@ pub use migration::{MIGRATIONS, Migration, latest_version};
 pub use quarantine::{QuarantineEntry, QuarantineRecord, QuarantineStage};
 pub use sqlite::{SqliteStore, StorePath};
 pub use store::{
-    IntelligenceStore, MigrationReport, Page, RecordKind, StoreRead, StoreWrite, UpsertOutcome,
+    Direction, EdgeQuery, EntityQuery, IntelligenceStore, MigrationReport, Page, RecordKind,
+    StoreRead, StoreWrite, UpsertOutcome,
 };
