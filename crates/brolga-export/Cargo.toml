@@ -1,0 +1,26 @@
+[package]
+name = "brolga-export"
+description = "Versioned exporters for Brolga context packs, with declared lossiness and a policy gate that cannot be bypassed"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories = ["encoding"]
+
+[lints]
+workspace = true
+
+[dependencies]
+brolga-config = { version = "0.1.0", path = "../brolga-config" }
+brolga-model = { version = "0.1.0", path = "../brolga-model" }
+brolga-security = { version = "0.1.0", path = "../brolga-security" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+serde_norway = "0.9.42"
+thiserror = "2.0.19"
+
+[dev-dependencies]
+serde_json = "1.0.151"

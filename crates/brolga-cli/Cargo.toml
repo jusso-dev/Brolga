@@ -20,6 +20,7 @@ workspace = true
 [dependencies]
 brolga-api = { version = "0.1.0", path = "../brolga-api" }
 brolga-config = { version = "0.1.0", path = "../brolga-config" }
+brolga-export = { version = "0.1.0", path = "../brolga-export" }
 brolga-graph = { version = "0.1.0", path = "../brolga-graph" }
 brolga-connectors = { version = "0.1.0", path = "../brolga-connectors" }
 brolga-ingest = { version = "0.1.0", path = "../brolga-ingest" }

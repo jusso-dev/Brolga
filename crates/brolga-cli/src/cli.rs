@@ -206,6 +206,20 @@ pub(crate) enum Command {
     /// Validate and explain a declarative mapping.
     #[command(subcommand)]
     Mapping(MappingCommand),
+
+    /// List the export formats this build ships.
+    #[command(subcommand)]
+    Export(ExportCommand),
+}
+
+/// What to ask about exporting.
+#[derive(Debug, Subcommand)]
+pub(crate) enum ExportCommand {
+    /// List every format, with its orientation, its lossiness, and what it needs.
+    ///
+    /// Reading this before choosing a format is the point: "export to STIX" sounds like a change of
+    /// encoding and is a change of model, and the table says which fields have nowhere to go.
+    Formats,
 }
 
 /// What to do with a mapping document.
@@ -270,6 +284,14 @@ pub(crate) struct ContextArgs {
     /// How many relationships to gather.
     #[arg(long, default_value_t = 100)]
     pub(crate) max_relationships: u64,
+
+    /// Write the pack in an export format instead of printing it.
+    ///
+    /// `brolga export formats` lists them with what each one costs you. The policy decision is made
+    /// **after** the format is chosen, because which capability an export needs depends on it: reading
+    /// your own pack as Markdown is a read, and producing a STIX bundle is redistribution.
+    #[arg(long, value_name = "NAME")]
+    pub(crate) format: Option<String>,
 }
 
 /// `brolga explain-plan`.
@@ -717,6 +739,7 @@ impl Command {
             Self::Completion(_) => "completion",
             Self::Context(_) => "context",
             Self::Mapping(_) => "mapping",
+            Self::Export(_) => "export",
         }
     }
 }

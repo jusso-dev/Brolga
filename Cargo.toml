@@ -5,6 +5,7 @@ members = [
     "crates/brolga-cli",
     "crates/brolga-config",
     "crates/brolga-connectors",
+    "crates/brolga-export",
     "crates/brolga-graph",
     "crates/brolga-ingest",
     "crates/brolga-model",

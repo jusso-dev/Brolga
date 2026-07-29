@@ -3,7 +3,7 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `mapping`, `stats`, `show`, `sources`,
+`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `mapping`, `export`, `stats`, `show`, `sources`,
 `quarantine`, `search`, `neighbours`, `checkpoint`, and `completion` are implemented.
 
 `brolga completion <shell>` prints a completion script generated from **this build's** command tree,
@@ -625,3 +625,68 @@ match and reporting a successful import of nothing.
 
 The same reader every XML format in Brolga uses. Any `<!DOCTYPE>` is refused outright before parsing,
 which closes the whole entity-expansion family, and a mapping cannot opt out of it.
+
+## `brolga export formats` and `brolga context --format`
+
+```bash
+brolga export formats                                   # what each one costs you
+brolga context ip 203.0.113.42 --format markdown        # a report
+brolga context ip 203.0.113.42 --format stix > b.json   # a bundle for another platform
+```
+
+Thirteen formats. `--format` writes the bytes to stdout unchanged — nothing appended, wrapped, or
+re-encoded, because an export is somebody else's input — and writes **what the format does not carry**
+to stderr. A shell redirect therefore captures the artefact while the operator still learns what is
+missing from it.
+
+### Policy runs after the format is chosen, and that ordering is the point
+
+Which capability an export needs depends on the format:
+
+| Orientation | Formats | Needs |
+| --- | --- | --- |
+| `machine` | `json`, `compact`, `yaml`, `jsonl`, `csv`, `sarif` | `read` |
+| `human` | `markdown`, `text`, `dot`, `sigma`, `hunt` | `read` |
+| `agent` | `brief` | `read` |
+| `interchange` | `stix`, `misp` | `redistribute` |
+
+Reading your own pack as Markdown is a read. Producing a STIX bundle creates an artefact whose whole
+purpose is to be handed to another platform, and that is redistribution. A gate placed before format
+selection could not tell them apart, so it would have to demand the stronger capability for
+everything — and an operator would be unable to read their own pack as text.
+
+An export the identity may not have exits `6` (policy denied) and produces **no bytes**, not truncated
+ones. See [ADR 0007](adr/0007-export-crate-boundary-and-the-policy-gate.md) for how the gate is made
+unbypassable rather than merely present.
+
+### Lossiness is declared, and the lossless claim is tested
+
+| Level | Meaning |
+| --- | --- |
+| `lossless` | Round-trips to an equal pack. Tested by round-tripping. |
+| `lossless_structural` | Every field survives; the container does not (JSONL). |
+| `partially_lossless` | Some fields have nowhere to go. The export names them. |
+| `compressed` | Items were condensed rather than dropped. |
+| `derived` | Fields were *invented* — a DOT node's colour is this exporter's choice, not intelligence. |
+| `narrative` | Prose. Faithful in meaning, not in structure; wording is not a compatibility surface. |
+
+### What the formats refuse to do
+
+- **CSV escapes every value against spreadsheet formula execution.** A cell reading
+  `=cmd|'/c calc'!A0` runs when the file is double-clicked, the value came from a feed, and CSV exists
+  to be opened in a spreadsheet. The cost is a visible `'` on a handful of cells, including making
+  `-1` render as `'-1` — the rule has no "looks like a number" exception, because such an exception is
+  one an attacker formats around.
+- **Sigma emits no `logsource`, so the rule does not run.** Brolga does not know which of your log
+  sources carries a field, and a guessed one either matches nothing — a silent false negative in a
+  detection pipeline — or matches the wrong field. Complete it and review before deploying.
+- **SARIF invents no file locations, and says when it does not apply.** A pack about a network
+  indicator has no place in a source tree; it exports as a notification with
+  `brolgaApplicable: false` rather than as a result a code-scanning tool would annotate.
+- **MISP omits `Orgc`, object templates, and galaxy clusters,** each of which needs configuration
+  shared with the receiving instance. Fabricating one attributes intelligence to an organisation or
+  an actor Brolga has no basis to name. Events are exported unpublished, with distribution `0`.
+- **STIX and MISP identifiers are derived from pack content, not generated.** Re-exporting an
+  unchanged pack produces byte-identical output, so a consumer re-ingesting it creates no duplicates.
+- **Nothing is pushed anywhere.** Export writes bytes. There is no code in Brolga that publishes to a
+  SIEM or writes back to an upstream platform.
