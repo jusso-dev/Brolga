@@ -1,6 +1,6 @@
 # Brolga roadmap
 
-Status: `v0.1.0 — Foundation` is complete; `v0.2.0 — Core ingestion` is in progress — the parser registry and pipeline exist, no format parser does. GitHub milestones and issues are the source of work status.
+Status: `v0.1.0 — Foundation` and `v0.2.0 — Core ingestion` are complete; `v0.3.0` has not started. Parsers exist as library code — `brolga ingest` still exits `5`, and the command surface is #34. GitHub milestones and issues are the source of work status.
 
 ## Release sequence
 
@@ -76,11 +76,51 @@ entity resolution and no confidence aggregation — the model records components
 that those decisions can later be made *and explained*, rather than being made now and rationalised
 afterwards.
 
-### v0.2.0 — Core ingestion
+### v0.2.0 — Core ingestion — complete
 
 Add bounded parser pipeline, quarantine, source retention, deterministic observable canonicalisation, STIX 2.1 and ATT&CK, MISP JSON, CSV, NDJSON, and plain-text ingestion.
 
 Exit gate: required initial formats have fixtures, strict and permissive modes are observable, malformed records are retained in quarantine, and every canonical record links to originals.
+
+#### Exit gate: demonstrated
+
+Each clause, and what demonstrates it. As with `v0.1.0`, every claim below is a test that exists or
+a command that was run.
+
+**"Required initial formats have fixtures."**
+
+Twelve fixture files across three corpora: a STIX 2.1 bundle carrying SDOs, SCOs, SROs and a marking
+definition, an ATT&CK enterprise shape, a bare unwrapped STIX object; a MISP event with nested
+objects, tags and a galaxy, a warning list, a feed `response` array; and CSV with a byte-order mark,
+CRLF-terminated CSV, TSV, a plain-text indicator list, NDJSON with a deliberately malformed line, and
+a JSON array. Each is ingested by a test that asserts exact counts rather than "more than zero".
+
+**"Strict and permissive modes are observable."**
+
+`IngestMode::Strict` is the default and refuses a batch containing anything it cannot accept —
+writing no records, no source objects, and no retained evidence, asserted against a real database.
+`Permissive` persists the acceptable records and quarantines the rest. The report says which mode
+produced it, and its counts reconcile: accepted plus rejected equals offered, with a debug assertion
+on the invariant and a summary that prints its zeroes.
+
+**"Malformed records are retained in quarantine."**
+
+A quarantine row records what was rejected, which parser rejected it, at which stage, for what typed
+reason, at what offset, with a bounded control-character-free excerpt. Its identity derives from the
+rejection rather than the attempt, so re-importing a broken feed updates one row and increments an
+occurrence count instead of appending. Fragments are stripped of control characters on the way in,
+because a quarantine table is read through terminals.
+
+**"Every canonical record links to originals."**
+
+Every record carries source-derived provenance citing the content-addressed source object it was
+parsed from, asserted per record for all three formats. The original bytes are retained, deduplicated
+by digest, verified on retrieval against the address they were filed under, and released only by an
+explicit audited decision. MISP attributes additionally carry a `part-of` edge to the event that
+published them.
+
+**Not claimed.** `brolga ingest` exits `5`. Every parser is library code and no CLI command drives
+one; the command surface is #34, in `v0.5.0`.
 
 ### v0.3.0 — Intelligence graph
 
