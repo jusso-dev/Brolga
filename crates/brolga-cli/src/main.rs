@@ -23,6 +23,7 @@ mod context_command;
 mod exit;
 mod fetch_command;
 mod graph_commands;
+mod mcp;
 mod output;
 mod plan_command;
 mod serve_command;
