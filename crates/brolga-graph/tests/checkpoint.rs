@@ -30,9 +30,9 @@ use brolga_model::{
 };
 use brolga_security::{CancellationToken, Cancelled};
 use brolga_storage::{
-    BlobMetadata, Direction, EdgeQuery, EntityQuery, GraphDecisionRow, IntelligenceStore, Page,
-    QuarantineRecord, RecordKind, RetentionEvent, RetrievedBlob, SqliteStore, StorageError,
-    StoreRead,
+    BlobMetadata, CheckpointSummary, Direction, EdgeQuery, EntityQuery, GraphDecisionRow,
+    IntelligenceStore, Page, QuarantineRecord, RecordKind, RetentionEvent, RetrievedBlob,
+    SqliteStore, StorageError, StoreRead,
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -1107,6 +1107,14 @@ impl<'store> ShiftingVersion<'store> {
 }
 
 impl StoreRead for ShiftingVersion<'_> {
+    fn get_checkpoint(&self, name: &str) -> Result<Option<serde_json::Value>, StorageError> {
+        self.inner.get_checkpoint(name)
+    }
+
+    fn list_checkpoints(&self) -> Result<Vec<CheckpointSummary>, StorageError> {
+        self.inner.list_checkpoints()
+    }
+
     fn graph_version(&self) -> Result<u64, StorageError> {
         let seen = self.reads.get();
         self.reads.set(seen + 1);
@@ -1239,4 +1247,208 @@ impl StoreRead for ShiftingVersion<'_> {
     fn source_blob_stored_bytes(&self) -> Result<u64, StorageError> {
         self.inner.source_blob_stored_bytes()
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Persistence — a baseline that does not survive the run cannot answer the question anybody asks
+// ---------------------------------------------------------------------------------------------
+
+/// Everything storage needs to refuse an unusable baseline without decoding it.
+fn summary_of(name: &str, taken: &Checkpoint) -> CheckpointSummary {
+    CheckpointSummary {
+        name: name.to_owned(),
+        shape: taken.shape.to_string(),
+        graph_version: taken.graph_version,
+        algorithm: taken.algorithm.to_owned(),
+        algorithm_version: taken.algorithm_version,
+        captured_at: taken.captured_at.to_rfc3339(),
+        truncated: !taken.is_complete(),
+    }
+}
+
+/// The question is never "what changed since this process started". It is "what changed since last
+/// week", and answering it means the baseline outlives the run that took it.
+#[test]
+fn a_checkpoint_survives_being_written_and_read_back_by_another_process() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let path = directory.path().join("brolga.sqlite");
+
+    let before = {
+        let mut store = SqliteStore::open(&path, 5000).unwrap();
+        store.migrate().unwrap();
+        seed(&mut store);
+
+        let before = checkpoint(&store);
+        let summary = summary_of("nightly", &before);
+        let document = serde_json::to_value(&before).unwrap();
+        store
+            .transaction(|write| write.put_checkpoint(&summary, &document))
+            .unwrap();
+        before
+    };
+
+    // A different `SqliteStore`, as a later run would have.
+    let store = SqliteStore::open(&path, 5000).unwrap();
+    let stored = store
+        .get_checkpoint("nightly")
+        .unwrap()
+        .expect("the baseline outlived the process that took it");
+    let restored: Checkpoint = serde_json::from_value(stored).unwrap();
+
+    assert_eq!(restored.fingerprint(), before.fingerprint());
+    assert_eq!(restored.shape, before.shape);
+    assert_eq!(restored.records, before.records);
+}
+
+/// A delta against a reloaded baseline must equal one against the in-memory original. If
+/// serialisation lost anything material, it shows up here as phantom change — which is the failure
+/// a delta exists to avoid.
+#[test]
+fn a_delta_against_a_reloaded_baseline_matches_one_against_the_original() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let path = directory.path().join("brolga.sqlite");
+
+    let mut store = SqliteStore::open(&path, 5000).unwrap();
+    store.migrate().unwrap();
+    seed(&mut store);
+
+    let baseline = checkpoint(&store);
+    store
+        .transaction(|write| {
+            write.put_checkpoint(
+                &summary_of("baseline", &baseline),
+                &serde_json::to_value(&baseline).unwrap(),
+            )
+        })
+        .unwrap();
+
+    write(
+        &mut store,
+        &[entity("newcomer")],
+        &[uses("hub", "newcomer")],
+    );
+    let now = checkpoint(&store);
+
+    let restored: Checkpoint =
+        serde_json::from_value(store.get_checkpoint("baseline").unwrap().unwrap()).unwrap();
+
+    let from_memory = delta(&baseline, &now);
+    let from_disk = delta(&restored, &now);
+
+    assert_eq!(
+        from_disk.changes.len(),
+        from_memory.changes.len(),
+        "a round trip through storage must not manufacture or lose a change"
+    );
+    assert_eq!(from_disk.unchanged, from_memory.unchanged);
+    assert_eq!(from_disk.compared, from_memory.compared);
+    assert_eq!(
+        from_disk.counts(),
+        from_memory.counts(),
+        "every category must match, not merely the total"
+    );
+}
+
+/// A named baseline is a name an operator reuses — "nightly" means the latest nightly. Re-taking it
+/// moves it rather than accumulating superseded baselines nobody prunes.
+#[test]
+fn re_taking_a_named_checkpoint_moves_it_rather_than_appending() {
+    let mut store = store();
+    seed(&mut store);
+
+    let first = checkpoint(&store);
+    let created = store
+        .transaction(|write| {
+            write.put_checkpoint(
+                &summary_of("nightly", &first),
+                &serde_json::to_value(&first).unwrap(),
+            )
+        })
+        .unwrap();
+    assert!(created, "the name was new");
+
+    write(
+        &mut store,
+        &[entity("newcomer")],
+        &[uses("hub", "newcomer")],
+    );
+    let second = checkpoint(&store);
+    let created_again = store
+        .transaction(|write| {
+            write.put_checkpoint(
+                &summary_of("nightly", &second),
+                &serde_json::to_value(&second).unwrap(),
+            )
+        })
+        .unwrap();
+    assert!(!created_again, "the name already existed");
+
+    assert_eq!(
+        store.list_checkpoints().unwrap().len(),
+        1,
+        "one baseline, moved"
+    );
+    let stored: Checkpoint =
+        serde_json::from_value(store.get_checkpoint("nightly").unwrap().unwrap()).unwrap();
+    assert_eq!(
+        stored.fingerprint(),
+        second.fingerprint(),
+        "the stored baseline is the newer one"
+    );
+}
+
+/// A truncated baseline must be refusable *without decoding it*. A delta against a partial baseline
+/// reports records as added when the baseline merely did not reach them, which reads as a wave of
+/// new intelligence.
+#[test]
+fn a_summary_says_whether_a_baseline_was_truncated_without_decoding_it() {
+    let mut store = store();
+    seed(&mut store);
+
+    let complete = checkpoint(&store);
+    let summary = summary_of("complete", &complete);
+    assert!(!summary.truncated, "this capture reached everything");
+
+    store
+        .transaction(|write| {
+            write.put_checkpoint(&summary, &serde_json::to_value(&complete).unwrap())
+        })
+        .unwrap();
+
+    let listed = store.list_checkpoints().unwrap();
+    assert_eq!(listed.len(), 1);
+    assert!(!listed[0].truncated);
+    assert_eq!(listed[0].shape, complete.shape.to_string());
+    assert_eq!(listed[0].algorithm_version, complete.algorithm_version);
+}
+
+/// Removing a baseline is explicit, and removing one that was never there is not a failure — an
+/// operator cleaning up should not have to check first.
+#[test]
+fn deleting_a_checkpoint_is_explicit_and_absence_is_not_a_failure() {
+    let mut store = store();
+    seed(&mut store);
+
+    let taken = checkpoint(&store);
+    store
+        .transaction(|write| {
+            write.put_checkpoint(
+                &summary_of("scratch", &taken),
+                &serde_json::to_value(&taken).unwrap(),
+            )
+        })
+        .unwrap();
+
+    assert!(
+        store
+            .transaction(|write| write.delete_checkpoint("scratch"))
+            .unwrap()
+    );
+    assert!(store.get_checkpoint("scratch").unwrap().is_none());
+    assert!(
+        !store
+            .transaction(|write| write.delete_checkpoint("scratch"))
+            .unwrap(),
+        "deleting what is not there reports false rather than failing"
+    );
 }

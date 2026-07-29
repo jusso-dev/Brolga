@@ -40,6 +40,7 @@ use serde::{Deserialize, Serialize};
 use crate::blob::{
     BlobMetadata, BlobOutcome, BlobRequest, RetentionClass, RetentionEvent, RetrievedBlob,
 };
+use crate::checkpoint::CheckpointSummary;
 use crate::decision::GraphDecisionRow;
 use crate::error::Result;
 use crate::quarantine::{QuarantineEntry, QuarantineRecord};
@@ -660,6 +661,24 @@ pub trait StoreRead {
     /// As [`Self::get_entity_json`].
     fn get_source_object_json(&self, id: &str) -> Result<Option<serde_json::Value>>;
 
+    /// Read a named checkpoint back.
+    ///
+    /// Returned as the stored document, for the caller to decode into whatever the producing
+    /// algorithm's type is. Storage does not know what a checkpoint means and should not have to.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure, [`crate::StorageError::Corrupt`] if
+    /// the stored document is not valid JSON.
+    fn get_checkpoint(&self, name: &str) -> Result<Option<serde_json::Value>>;
+
+    /// Every stored checkpoint's name and summary, most recent capture first.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn list_checkpoints(&self) -> Result<Vec<CheckpointSummary>>;
+
     /// The graph's material-change version.
     ///
     /// Increments when a graph record is inserted or changed, and not when an upsert is a no-op —
@@ -785,6 +804,30 @@ pub trait StoreWrite {
     ///
     /// [`crate::StorageError::Query`] for a backend failure.
     fn quarantine(&mut self, entry: &QuarantineEntry) -> Result<bool>;
+
+    /// Store a checkpoint under a name, replacing any checkpoint already under it.
+    ///
+    /// Replacing rather than appending, because a checkpoint is a *named baseline* — "nightly",
+    /// "before the migration" — and an operator who re-takes one means to move it. History of what
+    /// changed lives in the deltas, not in a pile of superseded baselines.
+    ///
+    /// Returns `true` when the name was new.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn put_checkpoint(
+        &mut self,
+        summary: &CheckpointSummary,
+        document: &serde_json::Value,
+    ) -> Result<bool>;
+
+    /// Remove a named checkpoint.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn delete_checkpoint(&mut self, name: &str) -> Result<bool>;
 
     /// Record a graph decision, replacing any earlier decision about the same inputs.
     ///
