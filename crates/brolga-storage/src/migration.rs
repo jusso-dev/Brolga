@@ -88,6 +88,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "graph_decisions",
         sql: GRAPH_DECISIONS,
     },
+    Migration {
+        id: 6,
+        name: "decision_attribution",
+        sql: DECISION_ATTRIBUTION,
+    },
 ];
 
 /// The highest migration identifier this build carries.
@@ -307,6 +312,26 @@ CREATE INDEX graph_decisions_subject ON graph_decisions (decision_kind, subject)
 CREATE INDEX graph_decisions_verdict ON graph_decisions (decision_kind, verdict);
 ";
 
+/// Who made a decision, and under what authority.
+///
+/// Added because the alternative was worse. A decision an analyst made by hand and one an algorithm
+/// derived are both decisions, and without somewhere to put the actor the analyst's identity ends up
+/// in a column named for something else — at which point a query filtering that column returns a
+/// mixture of source-object identifiers and human names, and nobody notices until it matters.
+///
+/// #21 already made actor and policy context *preconditions* for a manual resolution operation. This
+/// is the same rule applied to the decision log: a decision with no attributable decision-maker
+/// cannot be reviewed, appealed, or learned from.
+///
+/// Both columns are nullable, because a derived decision has no actor and inventing one — "system",
+/// "brolga" — would make an unattributed decision indistinguishable from an attributed one.
+const DECISION_ATTRIBUTION: &str = "\
+ALTER TABLE graph_decisions ADD COLUMN actor TEXT;
+ALTER TABLE graph_decisions ADD COLUMN policy_context TEXT;
+
+CREATE INDEX graph_decisions_actor ON graph_decisions (actor);
+";
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -422,6 +447,10 @@ mod tests {
             (
                 5_u32,
                 "sha256:ed1630ae459ef73dce56ebdf84e12672c64377dff383e89b6be6709f79ec6534",
+            ),
+            (
+                6_u32,
+                "sha256:67c0313d32dc6c5ed98275a965324cfbaafdca1fc9fcdefd0fc338f1f5787e46",
             ),
         ];
         for (id, expected) in pinned {
