@@ -103,6 +103,8 @@ so this section cannot drift from the code without a test failing.
 | Ingest — STIX 2.0/2.1, MISP, Sigma, YARA, OpenIOC, IODEF, CEF/LEEF/syslog, CSV/NDJSON | working |
 | Ingest — OSV, NVD JSON 2.0/1.1, CSAF 2.0, CVRF 1.2, CISA KEV, CycloneDX, SPDX JSON, SARIF | working |
 | Declarative JSON/CSV/XML mappings for formats with no compiled parser | working |
+| Export — pack JSON, compact, YAML, JSONL, STIX 2.1, MISP, Markdown, text, agent brief, DOT, CSV, Sigma metadata, hunting pack, SARIF | working |
+| Pushing an export to a SIEM or writing back to an upstream platform | **not supported**, by design — Brolga writes bytes and never publishes |
 | Scripting or expressions inside a mapping | **not supported**, by design — see [docs/CLI.md](docs/CLI.md#a-mapping-is-data-not-code) |
 | Vulnerability matching — deciding whether an installed version falls in an affected range | **not supported**; ranges are stored as published text, not compared |
 | Connectors — TAXII 2.0/2.1, MISP, OpenCTI, read-only | working |
