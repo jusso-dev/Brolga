@@ -26,12 +26,15 @@ What works today:
 
 What does not work yet: **ingestion, the intelligence graph, compression, context packs, the HTTP API, the MCP server, connectors, and plugins.** `brolga ingest` and `brolga context` exist as commands and exit `5`, naming the milestone that implements them, rather than pretending to succeed.
 
-`v0.2.0 — Core ingestion` is in progress. The parser registry and ingestion pipeline exist as
-library code, with a reference parser behind a `testing` feature and **no real format parser yet** —
-so there is still nothing to ingest and `brolga ingest` still exits `5`. STIX, MISP, and the
-delimited formats arrive in [#13](https://github.com/jusso-dev/Brolga/issues/13),
-[#14](https://github.com/jusso-dev/Brolga/issues/14), and
-[#15](https://github.com/jusso-dev/Brolga/issues/15).
+**`v0.2.0 — Core ingestion` is complete.** STIX 2.1 and MITRE ATT&CK, MISP events and warning
+lists, and CSV/TSV/JSON/NDJSON/plain-text feeds all parse into canonical records, with original
+source bytes retained content-addressed, strict and permissive modes, and a quarantine that keeps
+what it could not accept.
+
+**`brolga ingest` still exits `5`.** Every parser above is library code; no CLI command drives one
+yet. The command surface is [#34](https://github.com/jusso-dev/Brolga/issues/34), in `v0.5.0`. Until
+then ingestion is reachable from Rust and not from a terminal, and this README will not pretend
+otherwise.
 
 Work continues as scoped, dependency-aware [GitHub issues](https://github.com/jusso-dev/Brolga/issues) across eight release milestones. Each defines outcome, scope, acceptance criteria, dependencies, non-goals, and security and provenance impact. See the [roadmap](docs/ROADMAP.md) before proposing implementation.
 
