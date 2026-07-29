@@ -343,12 +343,17 @@ config`; `--version`, `doctor`, `init`, `config validate`, and `config explain` 
 holding `brolga.sqlite` owned by the non-root user, with a read-only root filesystem, no network,
 and all capabilities dropped; and the `tar` backup recipe.
 
+**Also verified, in the image rather than natively:** ingesting a STIX 2.1 bundle, a MISP event and
+a plain indicator list in one batch — 37 records accepted, 3 source objects retained, 2 quarantined
+with their reasons — then reading them back with `stats`, `sources`, and `quarantine` from separate
+containers against the same volume. The output is identical to the native binary's. `id` inside the
+container reports `uid=65532(brolga)`, and the same run succeeds under `--read-only --network none
+--cap-drop ALL`.
+
 **Not verified:**
 
 - **The `linux/amd64` build.** Only arm64 was built. The base images are pinned to multi-arch
-  indexes, but that is not evidence the amd64 manifest compiles.
-- **`ingest`, `stats`, `show`, `sources`, and `quarantine` inside the container.** They are covered
-  natively on Linux, macOS, and Windows by the release-smoke job in CI, which ingests a feed and
-  reads the stats back on every platform — but that runs the binary directly, not the image.
+  indexes, but that is not evidence the amd64 manifest compiles. The release-smoke job in CI does
+  build and run the binary on `ubuntu-latest`, which is amd64 — but natively, not in this image.
 - The `sqlite3 ".backup"` alternative, the restore-from-tar sequence, and copying a config into the
   volume. Written from the same primitives as the recipes that were executed, and not themselves run.
