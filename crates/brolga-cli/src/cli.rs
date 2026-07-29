@@ -189,15 +189,46 @@ pub(crate) enum Command {
     Completion(CompletionArgs),
 
     /// Produce a context pack for a subject.
-    ///
-    /// Declared but not implemented in this build. Exits `5`.
-    Context(NotImplementedArgs),
+    Context(ContextArgs),
 
     /// Show what a context profile will do, without retrieving anything.
     ///
     /// The answer to "why did my pack not contain X?", available before the pack exists rather
     /// than by reading one and inferring backwards.
     ExplainPlan(ExplainPlanArgs),
+}
+
+/// `brolga context`.
+#[derive(Debug, Args)]
+pub(crate) struct ContextArgs {
+    /// The observable kind: `ip`, `domain`, `url`, `email`, or `hash`.
+    pub(crate) kind: String,
+
+    /// The value, in whatever spelling you have. It is canonicalised before lookup.
+    pub(crate) value: String,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+
+    /// How much to return: `L0` through `L3`.
+    ///
+    /// `L4` and `L5` are reached by expanding a handle rather than by asking for a pack, because
+    /// serving them would make one decision cover an unbounded amount of source material.
+    #[arg(long, default_value = "L1")]
+    pub(crate) detail_level: String,
+
+    /// The purpose this is for, which names a profile.
+    #[arg(long)]
+    pub(crate) purpose: Option<String>,
+
+    /// How many records to gather.
+    #[arg(long, default_value_t = 100)]
+    pub(crate) max_objects: u64,
+
+    /// How many relationships to gather.
+    #[arg(long, default_value_t = 100)]
+    pub(crate) max_relationships: u64,
 }
 
 /// `brolga explain-plan`.
@@ -610,18 +641,6 @@ pub(crate) struct NotImplementedArgs {
 }
 
 impl Command {
-    /// The milestone that implements this command, for commands that are not implemented yet.
-    #[must_use]
-    pub(crate) const fn planned_milestone(&self) -> Option<&'static str> {
-        match self {
-            Self::Ingest(_) => Some("v0.2.0 — Core ingestion"),
-            Self::Fetch(_) => Some("v0.6.0 — Connectors"),
-            Self::Context(_) => Some("v0.4.0 — Compression engine"),
-            Self::ExplainPlan(_) => None,
-            _ => None,
-        }
-    }
-
     /// The command's name, as typed.
     #[must_use]
     pub(crate) const fn name(&self) -> &'static str {
@@ -713,47 +732,30 @@ mod tests {
         }
     }
 
-    #[test]
-    fn unimplemented_commands_are_declared_rather_than_hidden() {
-        // A script written for a later Brolga should fail with a message about the version, not
-        // with "unrecognised subcommand".
-        for (argv, expected) in [
-            (
-                vec!["brolga", "ingest", "file.json"],
-                "v0.2.0 — Core ingestion",
-            ),
-            (
-                vec!["brolga", "context", "example.com"],
-                "v0.4.0 — Compression engine",
-            ),
-        ] {
-            let parsed = Cli::try_parse_from(argv).unwrap();
-            assert_eq!(parsed.command.planned_milestone(), Some(expected));
-        }
-    }
-
-    #[test]
-    fn implemented_commands_claim_no_milestone() {
-        for argv in [
-            vec!["brolga", "doctor"],
-            vec!["brolga", "init"],
-            vec!["brolga", "config", "validate"],
-            vec!["brolga", "exit-codes"],
-        ] {
-            let parsed = Cli::try_parse_from(argv).unwrap();
-            assert_eq!(parsed.command.planned_milestone(), None);
-        }
-    }
-
     /// So the failure is about the version rather than about the arguments. `ingest` used to be
     /// the example here and is now implemented, which is the point of the test moving rather than
-    /// being deleted: `context` is the remaining promise.
+    /// `context` now takes real arguments, so a subject parses as a kind and a value rather than
+    /// as an opaque pass-through.
+    ///
+    /// This test asserted the opposite until `context` was implemented: it was the last command
+    /// accepting arguments it would not act on.
     #[test]
-    fn an_unimplemented_command_accepts_arguments_it_will_not_act_on() {
-        let parsed =
-            Cli::try_parse_from(["brolga", "context", "--subject", "evil.example"]).unwrap();
+    fn context_parses_real_arguments() {
+        let parsed = Cli::try_parse_from([
+            "brolga",
+            "context",
+            "ip",
+            "203.0.113.42",
+            "--detail-level",
+            "L2",
+        ])
+        .unwrap();
         match parsed.command {
-            Command::Context(args) => assert!(!args.arguments.is_empty()),
+            Command::Context(args) => {
+                assert_eq!(args.kind, "ip");
+                assert_eq!(args.value, "203.0.113.42");
+                assert_eq!(args.detail_level, "L2");
+            }
             other => panic!("expected context, got {other:?}"),
         }
     }
@@ -820,7 +822,7 @@ mod tests {
             vec!["brolga", "show", "entity:x"],
             vec!["brolga", "sources"],
             vec!["brolga", "quarantine"],
-            vec!["brolga", "context"],
+            vec!["brolga", "context", "ip", "203.0.113.1"],
         ]
         .into_iter()
         .map(|argv| Cli::try_parse_from(argv).unwrap().command.name())

@@ -171,6 +171,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "brolga-config",
+ "brolga-graph",
  "brolga-ingest",
  "brolga-model",
  "brolga-security",
@@ -245,6 +246,7 @@ dependencies = [
 name = "brolga-graph"
 version = "0.1.0"
 dependencies = [
+ "brolga-config",
  "brolga-model",
  "brolga-security",
  "brolga-storage",
