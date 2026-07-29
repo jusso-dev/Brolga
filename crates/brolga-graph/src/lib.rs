@@ -19,12 +19,23 @@
 //!
 //! - [`dedup`] — telling a duplicate from a corroboration, which is the difference between "two
 //!   organisations observed this" and "one observed it and another copied it".
+//! - [`resolve`] — deciding when two records are the same thing, and refusing to decide it on a
+//!   name. A merge is close to irreversible in practice: once two actors' claims and sightings are
+//!   attributed to one identity, unpicking which evidence belonged to which is work nobody has the
+//!   information to do afterwards.
 
 #![forbid(unsafe_code)]
 
 pub mod dedup;
+pub mod resolve;
 
 pub use dedup::{
     DEDUP_ALGORITHM, DEDUP_ALGORITHM_VERSION, DedupDecision, DedupVerdict, Deduplicator,
     Observation, RecordLineage,
+};
+pub use resolve::{
+    ManualOperation, MatchSignal, NAME_SENSITIVE_KINDS, OperationKind, OperationRefused,
+    RESOLVE_ALGORITHM, RESOLVE_ALGORITHM_VERSION, ResolutionCandidate, ResolutionOutcome,
+    ResolutionState, ResolvableRecord, Resolver, Strength, merge_loses_a_marking, merged_markings,
+    merged_sources,
 };
