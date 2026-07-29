@@ -435,3 +435,39 @@ ingests at once are not — the second waits on the busy timeout and then fails.
 Read-only root filesystem, every capability dropped, `no-new-privileges`, non-root user, 1 GB
 memory, 256 processes. The API makes no outbound connections; unlike the command-line service it
 cannot use `network_mode: none`, because it has to answer on a port.
+
+## Audit events
+
+Every disclosure decision is recorded. An event carries **hashes and identifiers, never content**:
+the subject is a canonical identifier, the source is a content address, the outcome is a code, and
+the policy rule is a kind from a closed vocabulary.
+
+There is deliberately no field for a body, a message, or a value. An audit log is read by more
+people than the data it describes, kept longer, and shipped to systems with different access rules —
+a type that accepted a `details` string would collect source content inside a release, because
+somebody would reasonably put the useful thing there.
+
+### Fail-open and fail-closed
+
+A gap in an audit log is indistinguishable from nothing having happened, so which way a write
+failure falls is decided per action rather than globally:
+
+| Action | If the audit write fails |
+| --- | --- |
+| `expand_canonical`, `expand_source` | **Refuse.** Serving material whose disclosure could not be recorded is how a breach becomes unprovable. |
+| `policy_denied`, `authentication_failed` | **Refuse.** |
+| `configuration_changed` | **Refuse.** |
+| `context_read`, `ingest`, `fetch` | **Proceed**, and surface the failure. Refusing a read because a disk is full converts a monitoring problem into an outage. |
+
+`FailurePolicy::for_action` is the single place that decides, so an operator can read which way a
+deployment falls instead of learning it from behaviour under failure — the worst possible time.
+
+### Metric cardinality
+
+Labels come from closed vocabularies and are bounded at 64 distinct values each. A label derived
+from a subject value would give a metrics backend one time series per observable, which is how a
+monitoring system falls over because somebody ingested a feed.
+
+Past the ceiling the **label** is refused, not the operation: the thing being measured is fine, and
+the metric stops growing rather than the process stopping. Values already seen keep counting, so
+existing series continue to work.
