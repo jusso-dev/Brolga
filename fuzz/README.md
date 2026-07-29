@@ -6,8 +6,12 @@ cargo test --manifest-path fuzz/Cargo.toml
 
 # On nightly: the real thing.
 cargo install cargo-fuzz
-cargo fuzz build
-cargo fuzz run ingest_any crates/brolga-ingest/tests/fixtures/fuzz-seeds -- -max_total_time=60
+# `--features fuzzing` is required: the binaries carry `required-features` so the stable replay above
+# does not have to build `libfuzzer-sys`. Without the flag, `cargo fuzz build` matches no binaries and
+# exits zero — a build that passes by doing nothing.
+cargo fuzz build --features fuzzing
+cargo fuzz run --features fuzzing ingest_any \
+  crates/brolga-ingest/tests/fixtures/fuzz-seeds -- -max_total_time=60
 ```
 
 ## Targets

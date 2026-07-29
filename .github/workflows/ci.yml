@@ -325,8 +325,24 @@ jobs:
       - uses: Swatinem/rust-cache@98c8021b550208e191a6a3145459bfc9fb29c4c0 # v2.8.1
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz --locked
+      # `--features fuzzing` is required: the fuzz binaries carry `required-features = ["fuzzing"]`
+      # so that the stable corpus replay does not have to build `libfuzzer-sys`. Without it,
+      # `cargo fuzz build` matches no binaries and **succeeds** — a gate that passes by doing nothing,
+      # which is why the existence check below is not redundant.
       - name: Build every target
-        run: cargo fuzz build
+        run: cargo fuzz build --features fuzzing
+      - name: Check the build actually produced every binary
+        run: |
+          set -euo pipefail
+          built="fuzz/target/x86_64-unknown-linux-gnu/release"
+          missing=0
+          for target in ingest_any canonicalise stix_pattern mapping_document export_escaping; do
+            if [ ! -x "$built/$target" ]; then
+              echo "::error::fuzz target \`$target\` was not built" >&2
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ]
       # Sixty seconds per target, seeded from the checked-in corpus. `-runs` is not capped as well:
       # a wall-clock bound is the one that keeps the job's cost predictable on a shared runner.
       - name: Run each target against the corpus
@@ -334,7 +350,7 @@ jobs:
           set -euo pipefail
           for target in ingest_any canonicalise stix_pattern mapping_document export_escaping; do
             echo "::group::$target"
-            cargo fuzz run "$target" \
+            cargo fuzz run --features fuzzing "$target" \
               crates/brolga-ingest/tests/fixtures/fuzz-seeds \
               -- -max_total_time=60 -max_len=8192
             echo "::endgroup::"
