@@ -1,0 +1,5 @@
+[
+  { "indicator": "evil.example", "kind": "domain" },
+  { "indicator": "192.0.2.10", "kind": "ip" },
+  { "indicator": "d41d8cd98f00b204e9800998ecf8427e", "kind": "md5" }
+]
