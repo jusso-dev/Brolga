@@ -1,7 +1,8 @@
 # ADR 0001 — Cargo workspace boundaries and public interface versioning
 
-- Status: accepted; §4 amended by [0002](0002-raise-msrv-to-1-88-for-a-security-advisory.md), §1
-  amended by [0003](0003-ingestion-crate-boundary-and-parser-panic-policy.md)
+- Status: accepted; §4 amended by [0002](0002-raise-msrv-to-1-88-for-a-security-advisory.md); §1
+  amended by [0003](0003-ingestion-crate-boundary-and-parser-panic-policy.md) and
+  [0004](0004-graph-crate-boundary.md)
 - Date: 2026-07-28
 - Milestone: `v0.1.0 — Foundation`
 - Issue: [#2](https://github.com/jusso-dev/Brolga/issues/2)
@@ -30,8 +31,9 @@ request.
 
 > **Amended.** [ADR 0003](0003-ingestion-crate-boundary-and-parser-panic-policy.md) adds
 > `brolga-ingest` for `v0.2.0`, and records that `brolga-core` and `brolga-test-support` below were
-> never built. Read this table as the *permitted* set, not the present one. The original text is
-> left unedited as the historical record.
+> never built. [ADR 0004](0004-graph-crate-boundary.md) adds `brolga-graph` for `v0.3.0`. Read this
+> table as the *permitted* set, not the present one. The original text is left unedited as the
+> historical record.
 
 The `v0.1.0` workspace contains exactly these first-party crates. No other crate may be added
 during this milestone without amending this ADR.

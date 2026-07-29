@@ -1,0 +1,25 @@
+[package]
+name = "brolga-graph"
+description = "Deduplication, resolution, contradiction, decay, traversal, and checkpoints for Brolga"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories = ["algorithms"]
+
+[lints]
+workspace = true
+
+[dependencies]
+brolga-model = { version = "0.1.0", path = "../brolga-model" }
+brolga-security = { version = "0.1.0", path = "../brolga-security" }
+brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
+serde = { version = "1.0.229", features = ["derive"] }
+thiserror = "2.0.19"
+
+[dev-dependencies]
+brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
+tempfile = "3.27.0"

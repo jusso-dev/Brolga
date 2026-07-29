@@ -39,6 +39,7 @@ use crate::blob::{
     BlobCodec, BlobMetadata, BlobOutcome, BlobRequest, RetentionAction, RetentionClass,
     RetentionEvent, RetrievedBlob, decode_bytes, encode_bytes,
 };
+use crate::decision::GraphDecisionRow;
 use crate::error::{Result, StorageError};
 use crate::migration::{MIGRATIONS, MIGRATIONS_TABLE, latest_version};
 use crate::quarantine::{QuarantineEntry, QuarantineRecord, QuarantineStage};
@@ -680,6 +681,56 @@ impl StoreRead for SqliteStore {
             .map_err(|error| StorageError::query("checking whether an entity exists", error))?;
         Ok(found.is_some())
     }
+
+    fn graph_decisions_for(&self, kind: &str, subject: &str) -> Result<Vec<GraphDecisionRow>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT observation, compared_with, verdict, algorithm, algorithm_version, reason,
+                        decided_at
+                 FROM graph_decisions WHERE decision_kind = ?1 AND subject = ?2
+                 ORDER BY decided_at ASC, id ASC",
+            )
+            .map_err(|error| StorageError::query("preparing a graph decision query", error))?;
+
+        let rows = statement
+            .query_map(params![kind, subject], |row| {
+                Ok(GraphDecisionRow {
+                    kind: String::new(),
+                    subject: String::new(),
+                    observation: row.get(0)?,
+                    compared_with: row.get(1)?,
+                    verdict: row.get(2)?,
+                    algorithm: row.get(3)?,
+                    algorithm_version: u32::try_from(row.get::<_, i64>(4)?).unwrap_or(0),
+                    reason: row.get(5)?,
+                    decided_at: row.get(6)?,
+                })
+            })
+            .map_err(|error| StorageError::query("reading graph decisions", error))?;
+
+        let mut decisions = Vec::new();
+        for row in rows {
+            let mut row =
+                row.map_err(|error| StorageError::query("reading a graph decision row", error))?;
+            row.kind = kind.to_owned();
+            row.subject = subject.to_owned();
+            decisions.push(row);
+        }
+        Ok(decisions)
+    }
+
+    fn graph_decision_count(&self, kind: &str, verdict: &str) -> Result<u64> {
+        let value: i64 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM graph_decisions WHERE decision_kind = ?1 AND verdict = ?2",
+                params![kind, verdict],
+                |row| row.get(0),
+            )
+            .map_err(|error| StorageError::query("counting graph decisions", error))?;
+        Ok(u64::try_from(value).unwrap_or(0))
+    }
 }
 
 impl IntelligenceStore for SqliteStore {
@@ -1287,6 +1338,48 @@ impl StoreWrite for SqliteWriter<'_> {
 
         let _ = changed;
         Ok(occurrences == 1)
+    }
+
+    fn record_graph_decision(&mut self, decision: &GraphDecisionRow) -> Result<bool> {
+        let id = decision.derive_id();
+        let existed: Option<i64> = self
+            .transaction
+            .query_row(
+                "SELECT 1 FROM graph_decisions WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| StorageError::query("checking for a graph decision", error))?;
+
+        self.transaction
+            .execute(
+                "INSERT INTO graph_decisions
+                    (id, decision_kind, subject, observation, compared_with, verdict, algorithm,
+                     algorithm_version, reason, decided_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(id) DO UPDATE SET
+                    verdict           = excluded.verdict,
+                    algorithm         = excluded.algorithm,
+                    algorithm_version = excluded.algorithm_version,
+                    reason            = excluded.reason,
+                    decided_at        = excluded.decided_at",
+                params![
+                    id,
+                    decision.kind,
+                    decision.subject,
+                    decision.observation,
+                    decision.compared_with,
+                    decision.verdict,
+                    decision.algorithm,
+                    i64::from(decision.algorithm_version),
+                    decision.reason,
+                    now_rfc3339(),
+                ],
+            )
+            .map_err(|error| StorageError::query("recording a graph decision", error))?;
+
+        Ok(existed.is_none())
     }
 }
 
