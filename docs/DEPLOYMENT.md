@@ -106,9 +106,19 @@ copy it in — see [Reading and writing the volume](#reading-and-writing-the-vol
 
 ## Ingesting a file
 
-Brolga reads STIX 2.1 and ATT&CK bundles, MISP events, warning lists and feed exports, and
-CSV/TSV/JSON/NDJSON/plain-text indicator lists. Format is detected per file from its contents, so a
-mixed batch is fine and a mislabelled extension does not mislead it.
+Brolga reads STIX 2.0 and 2.1 and ATT&CK bundles, MISP events, warning lists and feed exports,
+Sigma rules, YARA rules, OpenIOC definitions, IODEF incident documents, CEF/LEEF/syslog telemetry,
+and CSV/TSV/JSON/NDJSON/plain-text indicator lists. Format is detected per file from its contents,
+so a mixed batch is fine and a mislabelled extension does not mislead it.
+
+Detection content — Sigma, YARA, OpenIOC — becomes `detection_rule` entities. Brolga **stores rules
+and never runs them**: no condition is evaluated, no string is matched, no query is translated. A
+rule's detection logic is read only where it names a whole value under plain equality, and every
+field that was not read is recorded so `brolga show` can say why a rule contributed no observables.
+
+XML documents carrying a `<!DOCTYPE>` are refused outright rather than parsed with entity expansion
+turned off. A DTD is what entity-expansion and external-entity attacks need, and no legitimate
+OpenIOC or IODEF document has one.
 
 Drop files into the `feeds/` directory next to `docker-compose.yml`. It is bind-mounted at
 `/feeds` **read-only**, because Brolga only ever reads them and a writable mount would let a bug
