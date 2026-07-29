@@ -47,6 +47,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod budget;
 pub mod checkpoint;
 pub mod confidence;
 pub mod contradiction;
@@ -56,6 +57,10 @@ pub mod rank;
 pub mod resolve;
 pub mod traverse;
 
+pub use budget::{
+    BYTES_PER_TOKEN, BudgetFailure, Dimension, Fitted, HeuristicTokens, Item, Limits, Spend,
+    TokenEstimator, fit,
+};
 pub use checkpoint::{
     CHECKPOINT_ALGORITHM, CHECKPOINT_ALGORITHM_VERSION, CaptureError, Change, ChangeCategory,
     Checkpoint, CheckpointRequest, ConfidenceBand, Delta, DeltaLimits, DeltaRefused,
