@@ -99,6 +99,7 @@
 #![forbid(unsafe_code)]
 
 pub mod blob;
+pub mod decision;
 pub mod error;
 pub mod migration;
 pub mod quarantine;
@@ -109,6 +110,7 @@ pub use blob::{
     BlobCodec, BlobMetadata, BlobOutcome, BlobRequest, DEFAULT_MAX_BLOB_BYTES, RetentionAction,
     RetentionClass, RetentionEvent, RetrievedBlob,
 };
+pub use decision::GraphDecisionRow;
 pub use error::StorageError;
 pub use migration::{MIGRATIONS, Migration, latest_version};
 pub use quarantine::{QuarantineEntry, QuarantineRecord, QuarantineStage};

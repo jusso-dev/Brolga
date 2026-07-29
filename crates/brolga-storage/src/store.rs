@@ -35,6 +35,7 @@ use brolga_model::sighting::Sighting;
 use crate::blob::{
     BlobMetadata, BlobOutcome, BlobRequest, RetentionClass, RetentionEvent, RetrievedBlob,
 };
+use crate::decision::GraphDecisionRow;
 use crate::error::Result;
 use crate::quarantine::{QuarantineEntry, QuarantineRecord};
 
@@ -364,6 +365,20 @@ pub trait StoreRead {
     /// [`crate::StorageError::Query`] for a backend failure.
     fn graph_version(&self) -> Result<u64>;
 
+    /// Every recorded graph decision about one subject, oldest first.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn graph_decisions_for(&self, kind: &str, subject: &str) -> Result<Vec<GraphDecisionRow>>;
+
+    /// How many graph decisions of one kind carry a given verdict.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn graph_decision_count(&self, kind: &str, verdict: &str) -> Result<u64>;
+
     /// Whether an entity exists, without decoding it.
     ///
     /// Exists so referential integrity can be checked cheaply on every edge write.
@@ -464,6 +479,20 @@ pub trait StoreWrite {
     ///
     /// [`crate::StorageError::Query`] for a backend failure.
     fn quarantine(&mut self, entry: &QuarantineEntry) -> Result<bool>;
+
+    /// Record a graph decision, replacing any earlier decision about the same inputs.
+    ///
+    /// Re-running an algorithm over the same inputs updates one row rather than appending, because
+    /// re-running is what happens on every re-import and a log that grows each time is one nobody
+    /// reads. Returns `true` when the decision was recorded for the first time.
+    ///
+    /// Deliberately **not** a graph mutation: recording why something was decided does not change
+    /// what the graph says, so it does not move the graph version.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn record_graph_decision(&mut self, decision: &GraphDecisionRow) -> Result<bool>;
 
     /// Change a retained object's retention class, recording why.
     ///
