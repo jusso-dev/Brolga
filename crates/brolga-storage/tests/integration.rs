@@ -574,6 +574,10 @@ fn relationships_are_found_from_either_end() {
 
     store
         .transaction(|write| {
+            // Both endpoints first: referential integrity refuses an edge to an entity that does
+            // not exist, because a dangling edge makes traversal silently return nothing.
+            write.upsert_entity(&actor)?;
+            write.upsert_entity(&victim)?;
             write.upsert_relationship(&edge)?;
             Ok(())
         })

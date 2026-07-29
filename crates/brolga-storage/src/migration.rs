@@ -78,6 +78,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "quarantine",
         sql: QUARANTINE,
     },
+    Migration {
+        id: 4,
+        name: "graph_version",
+        sql: GRAPH_VERSION,
+    },
 ];
 
 /// The highest migration identifier this build carries.
@@ -244,6 +249,26 @@ CREATE TABLE quarantine (
 CREATE INDEX quarantine_source  ON quarantine (source_hash);
 CREATE INDEX quarantine_parser  ON quarantine (parser, stage);
 CREATE INDEX quarantine_last_at ON quarantine (last_seen_at);
+";
+
+/// The graph's material-change counter.
+///
+/// One row, one counter. It increments when a graph record is inserted or changed and **not** when
+/// an upsert is a no-op, so "has anything actually changed since I last looked?" is one integer
+/// comparison rather than a diff. A version that ticked on every write would answer "somebody ran an
+/// import", which is a different and much less useful question.
+///
+/// Kept in its own table rather than as a SQLite `PRAGMA user_version`, because that pragma is a
+/// single 32-bit field already spoken for by tooling conventions, and because a table can carry the
+/// timestamp of the last material change alongside it.
+const GRAPH_VERSION: &str = "\
+CREATE TABLE graph_meta (
+    id                INTEGER NOT NULL PRIMARY KEY CHECK (id = 1),
+    version           INTEGER NOT NULL,
+    last_changed_at   TEXT    NOT NULL
+) STRICT;
+
+INSERT INTO graph_meta (id, version, last_changed_at) VALUES (1, 0, '1970-01-01T00:00:00Z');
 ";
 
 #[cfg(test)]
