@@ -103,10 +103,10 @@ fn init<Out: Write, Err: Write>(args: &InitArgs, streams: &mut Streams<Out, Err>
     ));
 
     match streams.mode() {
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             let _ = streams.result_line(&args.path.display().to_string());
         }
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let _ = streams.result_json(&serde_json::json!({
                 "status": "ok",
                 "wrote": args.path.display().to_string(),
@@ -192,7 +192,7 @@ fn doctor<Out: Write, Err: Write>(
     let failed = checks.iter().filter(|check| !check.passed).count();
 
     match streams.mode() {
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             for check in &checks {
                 let mark = if check.passed { "ok" } else { "FAILED" };
                 let _ =
@@ -203,7 +203,7 @@ fn doctor<Out: Write, Err: Write>(
                 checks.len(),
             ));
         }
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let _ = streams.result_json(&serde_json::json!({
                 "status": if failed == 0 { "ok" } else { "failed" },
                 "correlation_id": correlation.as_str(),
@@ -258,9 +258,9 @@ fn config<Out: Write, Err: Write>(
 ) -> ExitCode {
     if matches!(command, ConfigCommand::Schema) {
         let schema = config_schema();
-        let _ = match streams.mode() {
-            OutputMode::Human | OutputMode::Json => streams.result_json(&schema),
-        };
+        // The schema is one document in every mode. There is nothing to tabulate and nothing to
+        // stream, and rendering it as prose would make it unusable for the thing it is for.
+        let _ = streams.result_json(&schema);
         return ExitCode::Success;
     }
 
@@ -276,14 +276,14 @@ fn config<Out: Write, Err: Write>(
         ConfigCommand::Validate => match resolve(&layers) {
             Ok(resolved) => {
                 match streams.mode() {
-                    OutputMode::Human => {
+                    OutputMode::Human | OutputMode::Table => {
                         let _ = streams.result_line(&format!(
                             "configuration is valid ({} settings, fingerprint {})",
                             resolved.attribution.len(),
                             resolved.fingerprint.short(),
                         ));
                     }
-                    OutputMode::Json => {
+                    OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
                         let _ = streams.result_json(&serde_json::json!({
                             "status": "valid",
                             "settings": resolved.attribution.len(),
@@ -308,7 +308,7 @@ fn config<Out: Write, Err: Write>(
                 };
 
                 match streams.mode() {
-                    OutputMode::Human => {
+                    OutputMode::Human | OutputMode::Table => {
                         for setting in &settings {
                             let _ = streams.result_line(&format!(
                                 "{} = {}  [{}]",
@@ -316,7 +316,7 @@ fn config<Out: Write, Err: Write>(
                             ));
                         }
                     }
-                    OutputMode::Json => {
+                    OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
                         let _ = streams.result_json(&serde_json::json!({
                             "fingerprint": explanation.fingerprint.to_string(),
                             "settings": settings
@@ -348,7 +348,7 @@ fn config<Out: Write, Err: Write>(
 /// `brolga exit-codes`.
 fn exit_codes<Out: Write, Err: Write>(streams: &mut Streams<Out, Err>) -> ExitCode {
     match streams.mode() {
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             for code in ExitCode::all() {
                 let _ = streams.result_line(&format!(
                     "{:>3}  {:<16} {}",
@@ -358,7 +358,7 @@ fn exit_codes<Out: Write, Err: Write>(streams: &mut Streams<Out, Err>) -> ExitCo
                 ));
             }
         }
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let _ = streams.result_json(
                 &ExitCode::all()
                     .iter()

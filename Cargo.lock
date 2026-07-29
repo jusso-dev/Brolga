@@ -117,6 +117,7 @@ dependencies = [
  "clap_complete",
  "serde",
  "serde_json",
+ "serde_yaml_ng",
  "tempfile",
  "time",
  "tracing",
