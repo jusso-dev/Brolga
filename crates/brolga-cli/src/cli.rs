@@ -158,6 +158,19 @@ pub(crate) enum Command {
     /// List retained original source objects.
     Sources(DatabaseArgs),
 
+    /// Find entities by typed filters.
+    Search(SearchArgs),
+
+    /// Show what one record is connected to, within a budget.
+    Neighbours(NeighboursArgs),
+
+    /// Take, list, and compare named graph baselines.
+    #[command(subcommand)]
+    Checkpoint(CheckpointCommand),
+
+    /// Print shell completion for this build's command tree.
+    Completion(CompletionArgs),
+
     /// Produce a context pack for a subject.
     ///
     /// Declared but not implemented in this build. Exits `5`.
@@ -241,6 +254,128 @@ pub(crate) struct QuarantineArgs {
     pub(crate) database: PathBuf,
 }
 
+/// `brolga search`.
+#[derive(Debug, Args)]
+pub(crate) struct SearchArgs {
+    /// Only entities of these kinds. Repeatable. Omitted admits every kind.
+    #[arg(long = "kind", value_name = "KIND")]
+    pub(crate) kinds: Vec<String>,
+
+    /// Only entities with these lifecycle statuses. Repeatable.
+    ///
+    /// Not defaulted to `active`. Somebody investigating why a record was withdrawn needs the
+    /// revoked ones, and a hidden default would answer a different question from the one asked.
+    #[arg(long = "status", value_name = "STATUS")]
+    pub(crate) statuses: Vec<String>,
+
+    /// How many to return.
+    #[arg(long, default_value_t = 50)]
+    pub(crate) limit: u32,
+
+    /// How many to skip.
+    #[arg(long, default_value_t = 0)]
+    pub(crate) offset: u64,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+}
+
+/// `brolga neighbours`.
+#[derive(Debug, Args)]
+pub(crate) struct NeighboursArgs {
+    /// The record to walk out from, as printed by `brolga search`.
+    pub(crate) id: String,
+
+    /// How many hops.
+    #[arg(long, default_value_t = 2)]
+    pub(crate) depth: u32,
+
+    /// Most records to visit.
+    #[arg(long, default_value_t = 200)]
+    pub(crate) max_nodes: usize,
+
+    /// Most edges to expand.
+    #[arg(long, default_value_t = 1000)]
+    pub(crate) max_edges: usize,
+
+    /// Most edges to follow out of any one record.
+    #[arg(long, default_value_t = 100)]
+    pub(crate) max_fan_out: u32,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+}
+
+/// Named graph baselines.
+#[derive(Debug, Subcommand)]
+pub(crate) enum CheckpointCommand {
+    /// Capture a baseline and store it under a name.
+    Take(CheckpointTakeArgs),
+
+    /// List stored baselines.
+    List(DatabaseArgs),
+
+    /// Report what changed between two baselines.
+    Diff(CheckpointDiffArgs),
+
+    /// Remove a stored baseline.
+    Remove(CheckpointRemoveArgs),
+}
+
+/// `brolga checkpoint take`.
+#[derive(Debug, Args)]
+pub(crate) struct CheckpointTakeArgs {
+    /// The name to store it under. Re-taking a name moves that baseline.
+    pub(crate) name: String,
+
+    /// The record to capture around.
+    #[arg(long)]
+    pub(crate) from: String,
+
+    /// How many hops the capture covers.
+    #[arg(long, default_value_t = 3)]
+    pub(crate) depth: u32,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+}
+
+/// `brolga checkpoint diff`.
+#[derive(Debug, Args)]
+pub(crate) struct CheckpointDiffArgs {
+    /// The earlier baseline.
+    pub(crate) before: String,
+
+    /// The later baseline.
+    pub(crate) after: String,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+}
+
+/// `brolga checkpoint remove`.
+#[derive(Debug, Args)]
+pub(crate) struct CheckpointRemoveArgs {
+    /// The baseline to remove.
+    pub(crate) name: String,
+
+    /// Where the database lives.
+    #[arg(long, default_value = "brolga.sqlite")]
+    pub(crate) database: PathBuf,
+}
+
+/// `brolga completion`.
+#[derive(Debug, Args)]
+pub(crate) struct CompletionArgs {
+    /// Which shell.
+    #[arg(value_enum)]
+    pub(crate) shell: clap_complete::Shell,
+}
+
 /// `brolga init`.
 #[derive(Debug, Args)]
 pub(crate) struct InitArgs {
@@ -310,6 +445,10 @@ impl Command {
             Self::Show(_) => "show",
             Self::Quarantine(_) => "quarantine",
             Self::Sources(_) => "sources",
+            Self::Search(_) => "search",
+            Self::Neighbours(_) => "neighbours",
+            Self::Checkpoint(_) => "checkpoint",
+            Self::Completion(_) => "completion",
             Self::Context(_) => "context",
         }
     }
