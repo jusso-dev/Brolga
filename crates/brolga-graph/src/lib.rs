@@ -30,6 +30,10 @@
 //! - [`confidence`] — composing a figure out of components that can each be argued with, and
 //!   recording the configuration that produced it. A bare number cannot be explained, recomputed
 //!   when one input changes, or disagreed with.
+//! - [`mod@traverse`] — following relationships without following them forever. An unbounded
+//!   traversal over a graph an attacker can publish into is a denial of service, so every walk is
+//!   held to a depth, node, edge, and fan-out budget plus the request's cancellation token, and says
+//!   which one stopped it.
 
 #![forbid(unsafe_code)]
 
@@ -37,6 +41,7 @@ pub mod confidence;
 pub mod contradiction;
 pub mod dedup;
 pub mod resolve;
+pub mod traverse;
 
 pub use confidence::{
     AnalystOverride, COMPONENT_CORROBORATION, COMPONENT_INFORMATION_CREDIBILITY, COMPONENT_RECENCY,
@@ -58,4 +63,9 @@ pub use resolve::{
     RESOLVE_ALGORITHM, RESOLVE_ALGORITHM_VERSION, ResolutionCandidate, ResolutionOutcome,
     ResolutionState, ResolvableRecord, Resolver, Strength, merge_loses_a_marking, merged_markings,
     merged_sources,
+};
+pub use traverse::{
+    PlanRefused, ReachedNode, TRAVERSE_ALGORITHM, TRAVERSE_ALGORITHM_VERSION, Traversal,
+    TraversalError, TraversalLimits, TraversalPlan, TraversalPolicy, TraversalRequest, Truncation,
+    traverse,
 };
