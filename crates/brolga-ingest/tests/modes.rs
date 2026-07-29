@@ -284,10 +284,29 @@ fn a_repeated_rejection_keeps_its_first_sighting_and_counts_up() {
         .quarantined_for_source(&ContentHash::of(MIXED))
         .unwrap();
 
-    assert_eq!(first[0].id, second[0].id, "same identity");
-    assert_eq!(first[0].first_seen_at, second[0].first_seen_at);
-    assert_eq!(first[0].occurrences, 1);
-    assert_eq!(second[0].occurrences, 2);
+    // Matched by identity rather than by position. `quarantined_for_source` orders by
+    // `last_seen_at DESC`, and the second ingest touches every row — so when two rows land in the
+    // same clock tick they keep their order and when they do not, they swap. Comparing `[0]` to
+    // `[0]` therefore passes or fails depending on how fast the machine is, which is how this test
+    // failed on one CI runner and nowhere else.
+    assert_eq!(first.len(), second.len(), "the same rows are present");
+
+    for before in &first {
+        let after = second
+            .iter()
+            .find(|record| record.id == before.id)
+            .unwrap_or_else(|| panic!("`{}` disappeared on the second ingest", before.id));
+
+        assert_eq!(
+            before.first_seen_at, after.first_seen_at,
+            "a retry must not move the first sighting"
+        );
+        assert_eq!(before.occurrences, 1);
+        assert_eq!(
+            after.occurrences, 2,
+            "a retry counts up rather than appending"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
