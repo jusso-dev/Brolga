@@ -2,10 +2,11 @@
 //!
 //! # A refusal and a failure are different answers
 //!
-//! [`ConnectorError::Denied`] means Brolga's own policy stopped the request. [`Self::Transport`]
-//! means the network or the server did. They are kept apart because the operator response is
-//! different — the first is a configuration decision to revisit, the second is somebody else's
-//! outage — and an error type that blurred them would send every diagnosis down the wrong path.
+//! [`ConnectorError::Denied`] means Brolga's own policy stopped the request.
+//! [`ConnectorError::Transport`] means the network or the server did. They are kept apart because
+//! the operator response is different — the first is a configuration decision to revisit, the
+//! second is somebody else's outage — and an error type that blurred them would send every
+//! diagnosis down the wrong path.
 //!
 //! # No error carries a credential
 //!
