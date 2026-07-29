@@ -364,7 +364,7 @@ impl Fitted {
 
 /// Fit items into limits, keeping every required item or failing.
 ///
-/// Items arrive pre-ranked — [`crate::rank`] decides the order and this decides what fits. The two
+/// Items arrive pre-ranked — [`crate::rank::rank`] decides the order and this decides what fits. The two
 /// are separate because "which is most valuable" and "what will fit" are different questions, and a
 /// function answering both would let a size accidentally outrank a score.
 ///
