@@ -11,6 +11,7 @@ authors.workspace = true
 
 [dependencies]
 brolga-config = { version = "0.1.0", path = "../brolga-config" }
+brolga-graph = { version = "0.1.0", path = "../brolga-graph" }
 brolga-model = { version = "0.1.0", path = "../brolga-model" }
 brolga-security = { version = "0.1.0", path = "../brolga-security" }
 brolga-storage = { version = "0.1.0", path = "../brolga-storage" }

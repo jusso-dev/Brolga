@@ -175,24 +175,46 @@ fn a_configuration_problem_exits_three() {
     );
 }
 
-/// `context` is the remaining unimplemented command. `ingest` used to be listed here and no longer
-/// is, because it is implemented — a command that exits 5 forever is a promise, and this test is
-/// what stops the promise outliving the delivery.
+/// Every declared command is implemented, so nothing exits 5 any more.
+///
+/// The test that asserted `context` exits 5 is gone rather than repointed: it existed to stop a
+/// promise outliving its delivery, and the promise has been delivered. `not_implemented` stays in
+/// the exit-code registry below, because a pipeline may already branch on it.
 #[test]
-fn an_unimplemented_command_exits_five_and_says_so() {
-    let output = brolga(&["context", "anything"]);
-    assert_eq!(code(&output), 5, "context must exit 5");
+fn context_produces_a_pack_rather_than_a_placeholder() {
+    // No store, so the pack is about an observable Brolga has never heard of — which is a real
+    // answer with a real disposition, not a refusal.
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let database = directory.path().join("brolga.sqlite");
 
-    let message = stderr(&output);
-    assert!(message.contains("not implemented"), "{message}");
+    let output = brolga(&[
+        "--output",
+        "json",
+        "context",
+        "ip",
+        "203.0.113.42",
+        "--database",
+        database.to_str().unwrap_or("brolga.sqlite"),
+    ]);
+
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+
+    let pack: serde_json::Value = serde_json::from_str(&stdout(&output)).expect("a JSON pack");
+    assert_eq!(pack["disposition"], "unknown");
+    assert_eq!(pack["subject"]["value"], "203.0.113.42");
     assert!(
-        message.contains("v0."),
-        "the message names a milestone: {message}"
+        pack["fingerprint"].as_str().is_some_and(|f| !f.is_empty()),
+        "a pack must carry its fingerprint"
     );
-    assert!(
-        stdout(&output).is_empty(),
-        "an unimplemented command must not print a result",
-    );
+    assert!(pack["policy"].is_object(), "and its policy context");
+}
+
+/// A malformed subject is the caller's mistake, and exits as one.
+#[test]
+fn a_malformed_context_subject_is_a_usage_error() {
+    let output = brolga(&["context", "ip", "not-an-address"]);
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    assert!(stdout(&output).is_empty(), "no result may be printed");
 }
 
 #[test]
@@ -220,10 +242,11 @@ fn the_registry_the_binary_reports_matches_the_codes_it_returns() {
         find("success")
     );
     assert_eq!(i64::from(code(&brolga(&["teleport"]))), find("usage"));
-    assert_eq!(
-        i64::from(code(&brolga(&["context"]))),
-        find("not_implemented")
-    );
+    // Nothing emits `not_implemented` any more, so the registry entry is asserted to exist rather
+    // than to be reachable. It stays because a pipeline may already branch on it, and removing a
+    // compatibility surface because nothing currently returns it breaks scripts for a reason that
+    // has nothing to do with the scripts.
+    assert_eq!(i64::from(code(&brolga(&["context"]))), find("usage"));
 }
 
 // -------------------------------------------------------------------------------------------------

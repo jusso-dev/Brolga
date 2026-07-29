@@ -47,6 +47,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod assemble;
 pub mod budget;
 pub mod checkpoint;
 pub mod confidence;
@@ -56,8 +57,10 @@ pub mod dedup;
 pub mod quality;
 pub mod rank;
 pub mod resolve;
+pub mod subject;
 pub mod traverse;
 
+pub use assemble::{AssemblyRequest, Gathered, build as build_pack, subject_node};
 pub use budget::{
     BYTES_PER_TOKEN, BudgetFailure, Dimension, Fitted, HeuristicTokens, Item, Limits, Spend,
     TokenEstimator, fit,
@@ -101,6 +104,7 @@ pub use resolve::{
     ResolutionState, ResolvableRecord, Resolver, Strength, merge_loses_a_marking, merged_markings,
     merged_sources,
 };
+pub use subject::{SubjectRejected, resolve as resolve_subject};
 pub use traverse::{
     PlanRefused, ReachedNode, TRAVERSE_ALGORITHM, TRAVERSE_ALGORITHM_VERSION, Traversal,
     TraversalError, TraversalLimits, TraversalPlan, TraversalPolicy, TraversalRequest, Truncation,

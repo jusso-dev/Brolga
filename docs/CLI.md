@@ -3,7 +3,7 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `fetch`, `explain-plan`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
+`ingest`, `fetch`, `context`, `explain-plan`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
 `completion` are implemented. `context` is not, and exits `5`.
 
 `brolga completion <shell>` prints a completion script generated from **this build's** command tree,
@@ -458,3 +458,37 @@ problem rather than the first.
 `fingerprint` identifies what a profile **does**, not what it says: renaming one does not change it,
 and changing a rule does. That is what makes it useful for answering "has the plan changed since
 this pack was built?".
+
+## `brolga context`
+
+What Brolga knows about one observable.
+
+```bash
+brolga context ip 203.0.113.42
+brolga context domain evil.example.com --detail-level L2 --output json
+```
+
+The value is canonicalised before lookup, so the spelling you have is fine — `EXAMPLE.COM.` and
+`example.com` reach the same record.
+
+**The same pack the API serves.** Assembly lives in one place and every interface calls it. A CLI
+that built its own pack would eventually disagree with the HTTP one, and the disagreement would
+surface in front of an analyst comparing a terminal to a case file.
+
+`--detail-level` takes `L0` through `L3`. `L4` and `L5` are refused here with a usage error rather
+than accepted and failed later: they are reached by expanding a handle, and the handles are in the
+pack's `handles` array.
+
+In human mode the finding and the claims go to stdout and the gaps and exclusions go to stderr, so
+`--quiet` silences the commentary without silencing the answer. In JSON mode the whole pack is one
+object on stdout.
+
+### Policy
+
+A local run is a **stated identity**: `policy.recipient` says `local-operator`. Somebody running the
+command holds the database file, so withholding TLP:RED from them would be theatre — but the grant
+is visible in the output and goes through the same policy code the server uses, rather than skipping
+the check.
+
+That is why the identity is named rather than assumed: the network path cannot reach local-operator
+access by simply not identifying itself.
