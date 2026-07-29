@@ -82,6 +82,7 @@ pub(crate) fn run<Out: Write, Err: Write>(
         Command::ExitCodes => exit_codes(streams),
         Command::Context(args) => crate::context_command::context(args, streams),
         Command::ExplainPlan(args) => crate::plan_command::explain_plan(args, streams),
+        Command::Mcp(args) => mcp(args, streams),
     }
 }
 
@@ -438,6 +439,32 @@ fn completion<Out: Write, Err: Write>(
         Err(_) => {
             let _ = streams.problem("the completion script was not valid UTF-8");
             ExitCode::Failure
+        }
+    }
+}
+
+/// `brolga mcp`.
+///
+/// Takes stdin and stdout directly rather than through [`Streams`]: the protocol owns both, and a
+/// diagnostic written to stdout would be an unparseable frame on the agent's stream. Everything
+/// this command says to a human goes to stderr.
+fn mcp<Out: Write, Err: Write>(
+    args: &crate::cli::McpArgs,
+    streams: &mut Streams<Out, Err>,
+) -> ExitCode {
+    let mut store = match crate::store_commands::open_store(&args.database, streams) {
+        Ok(store) => store,
+        Err(code) => return code,
+    };
+
+    let stdin = std::io::stdin();
+    let stdout = std::io::stdout();
+
+    match crate::mcp::serve(stdin.lock(), stdout.lock(), &mut store) {
+        Ok(()) => ExitCode::Success,
+        Err(error) => {
+            let _ = streams.problem(&format!("the MCP transport failed: {error}"));
+            ExitCode::Io
         }
     }
 }

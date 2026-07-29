@@ -3,7 +3,7 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `fetch`, `context`, `explain-plan`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
+`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
 `completion` are implemented. `context` is not, and exits `5`.
 
 `brolga completion <shell>` prints a completion script generated from **this build's** command tree,
@@ -492,3 +492,57 @@ the check.
 
 That is why the identity is named rather than assumed: the network path cannot reach local-operator
 access by simply not identifying itself.
+
+## `brolga mcp`
+
+Serves the Model Context Protocol over stdio, so an agent runtime can start Brolga as a subprocess.
+
+```json
+{"command": "brolga", "args": ["mcp", "--database", "/var/lib/brolga/brolga.sqlite"]}
+```
+
+JSON-RPC frames go on stdin and stdout, one per line. Everything meant for a human goes to stderr —
+a diagnostic on stdout would be an unparseable frame on the agent's stream.
+
+### Tools
+
+| Tool | Answers |
+| --- | --- |
+| `brolga_context` | What is known about one observable, as a versioned context pack |
+| `brolga_neighbours` | What is connected to an entity |
+| `brolga_stats` | How many records of each kind the store holds |
+
+**Intent tools, not a query surface.** An agent handed a query language composes questions nobody
+designed the answers for — and the answers are what carry the evidence, the markings, and the gaps.
+A tool returning rows would return them without any of that.
+
+The list is deliberately short: every tool is backed by a capability that exists and is tested. A
+tool that returned an empty result would be worse than an absent one, because an agent treats "no
+results" as an answer.
+
+### What an agent cannot reach
+
+**Raw source objects.** `brolga_context` serves `L0`–`L3`. Asking for `L4` or `L5` is refused with
+a code and a message saying to expand a handle instead — expansion is a policy decision per object,
+and a tool that served source material would make one call cover an unbounded amount of somebody
+else's licensed content.
+
+**Anything that writes.** There is no mutation tool, and there is nothing upstream of Brolga an
+agent can reach through it.
+
+### Budgets and uncertainty
+
+Every result states its budget — requested, returned, and whether it was exhausted — whether or not
+it bit. An agent cannot tell a complete answer from a truncated one by counting, and will treat the
+second as the first.
+
+Packs keep their `gaps`, `exclusions`, and `policy` across the tool boundary. An agent acting on a
+pack needs to know what it does not contain as much as what it does.
+
+### Errors
+
+Refusals are JSON-RPC errors with standard codes, not prose. An agent handed a sentence retries,
+rephrases, and eventually reports something that did not happen.
+
+One malformed frame is answered and the session continues, rather than the connection dropping and
+the agent retrying the whole conversation.
