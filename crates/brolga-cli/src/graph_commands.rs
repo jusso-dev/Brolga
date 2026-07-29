@@ -80,7 +80,7 @@ pub(crate) fn search<Out: Write, Err: Write>(
     };
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let entries: Vec<serde_json::Value> = found
                 .iter()
                 .map(|entity| {
@@ -93,6 +93,21 @@ pub(crate) fn search<Out: Write, Err: Write>(
                 })
                 .collect();
             let _ = streams.result_json(&serde_json::json!({ "entities": entries }));
+            ExitCode::Success
+        }
+        OutputMode::Table => {
+            let rows: Vec<Vec<String>> = found
+                .iter()
+                .map(|entity| {
+                    vec![
+                        entity.id.to_string(),
+                        entity.kind.as_str().to_owned(),
+                        entity.status.as_str().to_owned(),
+                        entity.name.as_str().to_owned(),
+                    ]
+                })
+                .collect();
+            let _ = streams.result_table(&["ID", "KIND", "STATUS", "NAME"], &rows);
             ExitCode::Success
         }
         OutputMode::Human => {
@@ -152,7 +167,7 @@ pub(crate) fn neighbours<Out: Write, Err: Write>(
         .collect();
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let nodes: Vec<serde_json::Value> = walked
                 .nodes
                 .iter()
@@ -174,7 +189,7 @@ pub(crate) fn neighbours<Out: Write, Err: Write>(
             }));
             ExitCode::Success
         }
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             for reached in &walked.nodes {
                 let _ = streams.result_line(&format!("{:>2}  {}", reached.depth, reached.node));
             }
@@ -250,7 +265,7 @@ pub(crate) fn checkpoint_take<Out: Write, Err: Write>(
     }
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let _ = streams.result_json(&serde_json::json!({
                 "name": args.name,
                 "created": created,
@@ -261,7 +276,7 @@ pub(crate) fn checkpoint_take<Out: Write, Err: Write>(
             }));
             ExitCode::Success
         }
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             let _ = streams.result_line(&format!(
                 "{} {} — {} record(s) at graph version {}",
                 if created { "took" } else { "moved" },
@@ -290,7 +305,7 @@ pub(crate) fn checkpoint_list<Out: Write, Err: Write>(
     };
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let entries: Vec<serde_json::Value> = listed
                 .iter()
                 .map(|summary| {
@@ -304,6 +319,21 @@ pub(crate) fn checkpoint_list<Out: Write, Err: Write>(
                 })
                 .collect();
             let _ = streams.result_json(&serde_json::json!({ "checkpoints": entries }));
+            ExitCode::Success
+        }
+        OutputMode::Table => {
+            let rows: Vec<Vec<String>> = listed
+                .iter()
+                .map(|summary| {
+                    vec![
+                        summary.name.clone(),
+                        summary.graph_version.to_string(),
+                        summary.captured_at.clone(),
+                        if summary.truncated { "yes" } else { "no" }.to_owned(),
+                    ]
+                })
+                .collect();
+            let _ = streams.result_table(&["NAME", "GRAPH", "CAPTURED", "TRUNCATED"], &rows);
             ExitCode::Success
         }
         OutputMode::Human => {
@@ -364,7 +394,7 @@ pub(crate) fn checkpoint_diff<Out: Write, Err: Write>(
     };
 
     match streams.mode() {
-        OutputMode::Json => {
+        OutputMode::Json | OutputMode::Yaml | OutputMode::Jsonl => {
             let changes: Vec<serde_json::Value> = delta
                 .changes
                 .iter()
@@ -411,7 +441,7 @@ pub(crate) fn checkpoint_diff<Out: Write, Err: Write>(
             }));
             ExitCode::Success
         }
-        OutputMode::Human => {
+        OutputMode::Human | OutputMode::Table => {
             if delta.changes.is_empty() {
                 let _ = streams.result_line(&format!(
                     "nothing material changed — {} record(s) compared",

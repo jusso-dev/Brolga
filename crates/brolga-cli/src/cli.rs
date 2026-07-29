@@ -73,6 +73,12 @@ pub(crate) struct GlobalOptions {
 pub(crate) enum OutputModeArg {
     /// Readable text.
     Human,
+    /// One YAML document.
+    Yaml,
+    /// One JSON object per line.
+    Jsonl,
+    /// Aligned columns.
+    Table,
     /// One JSON document.
     Json,
 }
@@ -82,6 +88,9 @@ impl From<OutputModeArg> for OutputMode {
         match value {
             OutputModeArg::Human => Self::Human,
             OutputModeArg::Json => Self::Json,
+            OutputModeArg::Yaml => Self::Yaml,
+            OutputModeArg::Jsonl => Self::Jsonl,
+            OutputModeArg::Table => Self::Table,
         }
     }
 }
@@ -600,8 +609,18 @@ mod tests {
 
     #[test]
     fn an_invalid_option_value_is_rejected() {
-        assert!(Cli::try_parse_from(["brolga", "--output", "yaml", "doctor"]).is_err());
+        assert!(Cli::try_parse_from(["brolga", "--output", "hieroglyphs", "doctor"]).is_err());
         assert!(Cli::try_parse_from(["brolga", "--log-level", "shouty", "doctor"]).is_err());
+    }
+
+    /// Every output mode the enum defines is accepted on the command line. A mode that exists in
+    /// code but is rejected by the parser is worse than one that does not exist: `--help` lists it.
+    #[test]
+    fn every_declared_output_mode_parses() {
+        for mode in ["human", "json", "yaml", "jsonl", "table"] {
+            let parsed = Cli::try_parse_from(["brolga", "--output", mode, "doctor"]);
+            assert!(parsed.is_ok(), "--output {mode} was rejected");
+        }
     }
 
     #[test]

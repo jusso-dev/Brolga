@@ -39,6 +39,60 @@ thing worse than a noisy one.
   Diagnostics name a record by identifier; content is retrieved explicitly by a caller that decided
   to.
 
+## Output modes
+
+`--output` selects how the *result* on stdout is rendered. It never changes what a command does,
+and never changes the exit code.
+
+| Mode | For | Schema version |
+|---|---|---|
+| `human` | Reading. Reflows whenever it reads better. | None — do not parse it |
+| `json` | One pretty-printed document per invocation. | Yes |
+| `yaml` | The same document as `json`, in YAML. | Yes |
+| `jsonl` | One record per line, for streaming and for `while read`. | Yes, on every line |
+| `table` | Aligned columns for the commands that are naturally tabular. | None |
+
+### The schema version
+
+Every machine-readable payload carries a `schema` field:
+
+```console
+$ brolga --output json search | jq -r .schema
+brolga.cli.output/1.0
+```
+
+This is a versioned compatibility surface under [ADR 0001 §6](adr/0001-repository-charter.md).
+Adding a field is a compatible change and does not move the version. Removing a field, renaming
+one, or changing a type does.
+
+Check it rather than assuming it. A consumer that has to guess whether a field moved has no way to
+fail safely:
+
+```bash
+schema=$(brolga --output json search | jq -r .schema)
+case "$schema" in
+  brolga.cli.output/1.*) ;;
+  *) echo "unsupported Brolga output schema: $schema" >&2; exit 1 ;;
+esac
+```
+
+`human` and `table` deliberately carry no version, because they carry no promise. Parsing them is
+how a script ends up depending on a column width.
+
+### JSONL
+
+`jsonl` streams the members of the collection rather than one object containing an array, so a
+consumer can act on the first record without waiting for the last:
+
+```console
+$ brolga --output jsonl search --kind intrusion_set
+{"_collection":"entities","id":"entity:8fd8cd7f-...","kind":"intrusion_set","name":"Bunyip Panda","schema":"brolga.cli.output/1.0","status":"active"}
+```
+
+The envelope field is `_collection`, not `kind`, because `kind` is a real field on an entity and an
+envelope that overwrote it would silently corrupt the value you filter on.
+
+
 ## Exit codes
 
 Exit codes are a **compatibility surface** under
@@ -79,7 +133,7 @@ needs them is not choosing them under pressure alongside the feature.
 | Option | Default | Notes |
 | --- | --- | --- |
 | `-c`, `--config <PATH>` | none | Repeatable. Later files override earlier ones. |
-| `-o`, `--output <human\|json>` | `human` | How the *result* is rendered on stdout. |
+| `-o`, `--output <human\|json\|yaml\|jsonl\|table>` | `human` | How the *result* is rendered on stdout. See [Output modes](#output-modes). |
 | `--log-level <error\|warn\|info\|debug\|trace>` | `info` | Diagnostics on stderr. |
 | `--log-format <text\|json>` | `text` | `json` emits one object per line. |
 | `-q`, `--quiet` | off | Silences commentary only. |
