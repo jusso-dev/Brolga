@@ -977,3 +977,118 @@ fn the_cost_estimate_uses_the_same_predicate_as_the_walk() {
     .unwrap();
     assert_eq!(plan.start_degree(), 1);
 }
+
+// ---------------------------------------------------------------------------------------------
+// Adversarial checks written during review, not by the module's author
+// ---------------------------------------------------------------------------------------------
+
+/// A hostile graph shaped to defeat a naive visited-set: a ring, plus a chord from every node back
+/// to the start, plus a chord to its predecessor. Every node is reachable from every other by
+/// several routes, and every budget is generous — so the only thing that can stop it is the cycle
+/// guard.
+///
+/// Written during review rather than alongside the module, because a bound tested only by the
+/// person who wrote it tends to be tested on the shape they had in mind.
+#[test]
+fn a_graph_with_many_interlocking_cycles_still_terminates() {
+    let mut store = store();
+    let names: Vec<String> = (0..40).map(|index| format!("node-{index:02}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+
+    // No self-edges: the model refuses a relationship whose ends are the same node, which is
+    // itself worth knowing — a self-loop is the cheapest way to make a naive walk spin.
+    let mut edges = Vec::new();
+    for (index, name) in refs.iter().enumerate() {
+        edges.push(uses(name, refs[(index + 1) % refs.len()]));
+        if index > 0 {
+            edges.push(uses(name, refs[0]));
+            edges.push(uses(name, refs[index - 1]));
+        }
+    }
+    populate(&mut store, &refs, &edges);
+
+    let result = traverse(
+        &store,
+        TraversalRequest::starting_at(node("node-00"))
+            .with_limits(TraversalLimits::new(100, 10_000, 10_000, 1_000)),
+        &CancellationToken::never_cancelled(),
+    )
+    .expect("a cyclic graph must terminate, not loop");
+
+    assert!(result.nodes.len() <= refs.len(), "no node visited twice");
+    assert!(
+        !result.truncated.contains(&Truncation::Nodes),
+        "40 nodes is well inside a 10,000 budget; hitting it would mean revisiting"
+    );
+}
+
+/// Every budget, driven to its limit on the same graph, must stop the walk *and say which one did*.
+/// A budget that is checked but never reported leaves a caller unable to tell a complete answer
+/// from a truncated one — and a truncated neighbourhood looks exactly like a small one.
+#[test]
+fn each_budget_in_turn_stops_the_walk_and_names_itself() {
+    let mut store = store();
+    let names: Vec<String> = (0..20).map(|index| format!("n-{index:02}")).collect();
+    let refs: Vec<&str> = names.iter().map(String::as_str).collect();
+    let edges: Vec<_> = refs.windows(2).map(|pair| uses(pair[0], pair[1])).collect();
+    populate(&mut store, &refs, &edges);
+
+    let cases = [
+        (
+            TraversalLimits::new(2, 1_000, 1_000, 1_000),
+            Truncation::Depth,
+        ),
+        (
+            TraversalLimits::new(100, 3, 1_000, 1_000),
+            Truncation::Nodes,
+        ),
+        (
+            TraversalLimits::new(100, 1_000, 2, 1_000),
+            Truncation::Edges,
+        ),
+    ];
+
+    for (limits, expected) in cases {
+        let result = traverse(
+            &store,
+            TraversalRequest::starting_at(node("n-00")).with_limits(limits),
+            &CancellationToken::never_cancelled(),
+        )
+        .expect("the walk runs");
+        assert!(
+            result.truncated.contains(&expected),
+            "expected {expected:?}, got {:?}",
+            result.truncated
+        );
+    }
+}
+
+/// The no-arbitrary-SQL claim, exercised through the whole stack rather than at the compiler.
+///
+/// A record whose *content* is a SQL payload must be stored and retrieved as content. If any layer
+/// were interpolating values into statement text, this is where it would surface.
+#[test]
+fn a_sql_payload_in_a_record_name_is_stored_and_traversed_as_content() {
+    let mut store = store();
+    let hostile = "'; DROP TABLE entities; --";
+    populate(
+        &mut store,
+        &[hostile, "ordinary"],
+        &[uses(hostile, "ordinary")],
+    );
+
+    assert_eq!(
+        store.count(brolga_storage::RecordKind::Entity).unwrap(),
+        2,
+        "the payload was data, not a statement"
+    );
+
+    let result = traverse(
+        &store,
+        TraversalRequest::starting_at(node(hostile))
+            .with_limits(TraversalLimits::new(3, 100, 100, 100)),
+        &CancellationToken::never_cancelled(),
+    )
+    .expect("a hostile name is just a name");
+    assert!(result.nodes.len() >= 2);
+}
