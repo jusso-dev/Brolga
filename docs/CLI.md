@@ -3,7 +3,12 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `stats`, `show`, `sources`, and `quarantine` are implemented. `context` is not, and exits `5`.
+`ingest`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
+`completion` are implemented. `context` is not, and exits `5`.
+
+`brolga completion <shell>` prints a completion script generated from **this build's** command tree,
+so it can never advertise a command the binary does not have — which would be worse than no
+completion, because a completion list reads as documentation.
 
 ## Output contract
 
