@@ -53,6 +53,7 @@ pub mod confidence;
 pub mod contradiction;
 pub mod decay;
 pub mod dedup;
+pub mod quality;
 pub mod rank;
 pub mod resolve;
 pub mod traverse;
@@ -89,6 +90,7 @@ pub use dedup::{
     DEDUP_ALGORITHM, DEDUP_ALGORITHM_VERSION, DedupDecision, DedupVerdict, Deduplicator,
     Observation, RecordLineage,
 };
+pub use quality::{GoldenMismatch, GoldenPack, QualityReport};
 pub use rank::{
     Candidate, Cluster, Factor, FactorWeights, Ranked, RankingPlan, Verdict, candidate_from_claim,
     rank,
