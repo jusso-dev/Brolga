@@ -1,0 +1,66 @@
+# The fuzzing harness.
+#
+# Deliberately outside the workspace (`Cargo.toml`'s `exclude`), because `cargo-fuzz` requires nightly
+# and a `libfuzzer-sys` dependency that must not enter the shipped lockfile. A workspace member would
+# pull both into every `cargo build` and into the MSRV job, which builds on 1.88.0 stable.
+[package]
+name = "brolga-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[features]
+# `libfuzzer-sys` is needed only by the fuzz binaries. Behind a feature so that
+# `cargo test --manifest-path fuzz/Cargo.toml` — the corpus replay CI runs on stable — does not need it
+# or the C toolchain it brings.
+fuzzing = ["dep:libfuzzer-sys"]
+
+[dependencies]
+libfuzzer-sys = { version = "0.4", optional = true }
+brolga-ingest = { path = "../crates/brolga-ingest" }
+brolga-export = { path = "../crates/brolga-export" }
+brolga-model = { path = "../crates/brolga-model" }
+brolga-security = { path = "../crates/brolga-security" }
+
+[[bin]]
+name = "ingest_any"
+path = "fuzz_targets/ingest_any.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "canonicalise"
+path = "fuzz_targets/canonicalise.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stix_pattern"
+path = "fuzz_targets/stix_pattern.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mapping_document"
+path = "fuzz_targets/mapping_document.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "export_escaping"
+path = "fuzz_targets/export_escaping.rs"
+required-features = ["fuzzing"]
+test = false
+doc = false
+bench = false
