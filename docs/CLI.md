@@ -3,7 +3,7 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `fetch`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
+`ingest`, `fetch`, `explain-plan`, `stats`, `show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and
 `completion` are implemented. `context` is not, and exits `5`.
 
 `brolga completion <shell>` prints a completion script generated from **this build's** command tree,
@@ -386,3 +386,75 @@ A run stopped by `--max-pages`, by `--timeout-seconds`, or by a failure reports 
 ```
 
 `complete` and `not_modified` are the only statuses that mean the feed has nothing outstanding.
+
+## `brolga explain-plan`
+
+Show what a context profile will do, before it does it — with no store, no subject, and no
+retrieval.
+
+```bash
+brolga explain-plan                    # every profile
+brolga explain-plan incident_triage    # one profile's plan
+```
+
+```
+findings        include  weight 50  (profile)
+relationships   rank     weight 50  (default)
+clusters        exclude  weight 50  (profile)
+evidence        include  weight 50  (floor)
+```
+
+Every line says **why**, not only what. "Why did my pack not contain relationships?" has three
+different fixes depending on whether the section was named by the profile, left to the default, or
+held by the floor — and `include` alone distinguishes none of them.
+
+### Profiles
+
+One shipped profile per purpose the context API accepts: `incident_triage`, `threat_hunting`,
+`malware_analysis`, `actor_research`, `vulnerability_prioritisation`, `executive_briefing`,
+`detection_engineering`, `exposure_assessment`, `supply_chain_investigation`, `case_enrichment`,
+and `raw_research`. All of them are ordinary editable profiles, not hard-coded behaviour.
+
+A profile states, per section, one of:
+
+| Preservation | Meaning |
+| --- | --- |
+| `required` | Always present, whatever a budget or a score says |
+| `preferred` | Ranked against everything else, included if it fits |
+| `excluded` | Never present |
+
+**A hard rule is not a high score.** `required` is absolute: no budget and no ranking pass may drop
+it. Expressing preservation as a very large weight is the obvious alternative and is wrong — a
+weight competes, and something that competes eventually loses to a tighter budget or to a bigger
+weight somebody adds later. An operator who says "always keep the markings" means always.
+
+### The floor
+
+`evidence`, `markings`, and `gaps` cannot be excluded by **any** profile. They are not content;
+they are what makes content usable. A pack without evidence cannot be defended, one without
+markings cannot be safely forwarded, and one without gaps reads as complete when it is not. An
+operator optimising for size would reach for exactly these three.
+
+A profile that tries fails to load, naming the section.
+
+### What a profile cannot do
+
+There is no field for a marking, a recipient, an authorisation, or a clearance. A profile selects
+among things the caller is *already entitled to see*, so the worst a misconfigured one can do is ask
+for less. A profile is the most-edited file in a deployment, and the most-edited file should not be
+able to widen a policy decision.
+
+There is also no expression, script, or callback — a profile is weights, lists, and numbers. A
+profile that could compute would be a program running inside a configuration file, in a process
+holding an intelligence database.
+
+### Validation and fingerprints
+
+An impossible profile fails **before retrieval**, not by producing a pack that honoured whichever
+rule was evaluated last. Over-allocated budgets, inheritance cycles, unknown parents, unknown
+section names, and out-of-range weights are all load-time errors, and validation reports *every*
+problem rather than the first.
+
+`fingerprint` identifies what a profile **does**, not what it says: renaming one does not change it,
+and changing a rule does. That is what makes it useful for answering "has the plan changed since
+this pack was built?".

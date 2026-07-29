@@ -87,6 +87,7 @@ pub mod error;
 pub mod layer;
 pub mod load;
 pub mod model;
+pub mod profile;
 pub mod schema;
 pub mod secret;
 pub mod service;
@@ -97,6 +98,10 @@ pub use load::{Format, parse_document, parse_layer};
 pub use model::{
     BrolgaConfig, CONFIG_VERSION, LimitsConfig, LogFormat, LogLevel, LoggingConfig, SqliteConfig,
     StorageBackend, StorageConfig,
+};
+pub use profile::{
+    ContextProfile, PROFILE_SCHEMA, PlanAction, PlanReason, PlanStep, Preservation, ProfileError,
+    ProfileSet, Section, Weight,
 };
 pub use schema::{config_schema, schema_id};
 pub use secret::SecretRef;
