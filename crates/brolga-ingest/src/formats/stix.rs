@@ -169,6 +169,13 @@ impl IntelligenceParser for StixParser {
         // resolving forward references in one pass would make propagation depend on bundle order.
         let markings = collect_markings(&objects);
 
+        // And the STIX id to canonical node map, for the same reason plus a sharper one. A STIX
+        // relationship names its endpoints by STIX identifier; canonical entities key on
+        // `(kind, name)`. Deriving an endpoint from the STIX id would produce an edge pointing at a
+        // record that was never written — which storage now refuses as a dangling edge, and which
+        // before that refusal would have made traversal silently return nothing.
+        let nodes = collect_nodes(&objects);
+
         let mut out = ParseOutput::default();
         let mut fan_out: BTreeMap<String, usize> = BTreeMap::new();
 
@@ -177,7 +184,7 @@ impl IntelligenceParser for StixParser {
                 .check_cancelled()
                 .map_err(|error| ParseError::new(error.to_string()))?;
 
-            match map_object(object, &origin, &markings, &mut fan_out, &limits) {
+            match map_object(object, &origin, &markings, &nodes, &mut fan_out, &limits) {
                 Ok(Some(record)) => out.records.push(record),
                 Ok(None) => {}
                 Err(rejection) => out.rejected.push(rejection.into_rejected(index)),
@@ -348,6 +355,7 @@ fn map_object(
     object: &Value,
     origin: &RecordOrigin,
     markings: &BTreeMap<String, Marking>,
+    nodes: &BTreeMap<String, NodeRef>,
     fan_out: &mut BTreeMap<String, usize>,
     limits: &brolga_security::InputLimits,
 ) -> Result<Option<ParsedRecord>, Rejection> {
@@ -359,7 +367,7 @@ fn map_object(
     match kind {
         // Consumed by collect_markings; not a record in its own right.
         "marking-definition" => Ok(None),
-        "relationship" => map_relationship(object, origin, markings, fan_out).map(Some),
+        "relationship" => map_relationship(object, origin, markings, nodes, fan_out).map(Some),
         "bundle" => Err(Rejection::new(
             "nested_bundle",
             "a bundle nested inside a bundle is not valid STIX 2.1",
@@ -429,7 +437,7 @@ fn map_entity(
     // actor under different STIX identifiers describe one actor, and keying on the STIX id would
     // make them two. The STIX id survives as an attribute below.
     let mut entity = Entity::new(
-        Id::derive(&[kind.as_str(), &name_text.as_str().to_lowercase()]),
+        entity_id_for(kind, name_text.as_str()),
         kind,
         name_text,
         origin.clone(),
@@ -544,6 +552,7 @@ fn map_relationship(
     object: &Value,
     origin: &RecordOrigin,
     markings: &BTreeMap<String, Marking>,
+    nodes: &BTreeMap<String, NodeRef>,
     fan_out: &mut BTreeMap<String, usize>,
 ) -> Result<ParsedRecord, Rejection> {
     let source_ref = object
@@ -586,12 +595,31 @@ fn map_relationship(
         .unwrap_or("related-to");
     let (kind, exact) = relationship_kind_of(stix_kind);
 
-    let mut relationship = Relationship::new(
-        kind,
-        NodeRef::Entity(Id::derive(&[source_ref])),
-        NodeRef::Entity(Id::derive(&[target_ref])),
-        origin.clone(),
-    );
+    // Resolved through the bundle's own objects, never derived from the STIX identifier. An edge
+    // whose endpoint is not in the bundle is rejected rather than written: a relationship to a
+    // record that does not exist is invisible in traversal, which is worse than a missing edge.
+    let source = *nodes.get(source_ref).ok_or_else(|| {
+        Rejection::new(
+            "unresolved_source_ref",
+            format!(
+                "`{source_ref}` is not an object in this bundle, so the edge would point at a \
+                 record that was never written"
+            ),
+            object,
+        )
+    })?;
+    let target = *nodes.get(target_ref).ok_or_else(|| {
+        Rejection::new(
+            "unresolved_target_ref",
+            format!(
+                "`{target_ref}` is not an object in this bundle, so the edge would point at a \
+                 record that was never written"
+            ),
+            object,
+        )
+    })?;
+
+    let mut relationship = Relationship::new(kind, source, target, origin.clone());
     relationship.markings = markings_for(object, markings);
 
     if !exact {
@@ -668,4 +696,45 @@ pub fn attack_id_of(object: &Value) -> Option<String> {
             .ok()
             .map(|canonical| canonical.into_value())
     })
+}
+
+/// Map every STIX identifier in a bundle to the canonical node it becomes.
+///
+/// Built in its own pass so a relationship can appear before the objects it joins — which it
+/// routinely does — and so that an endpoint is resolved to the *canonical* identity rather than
+/// derived from the STIX one. Objects this parser does not map are absent from the map, so an edge
+/// touching one is rejected with a reason instead of dangling.
+fn collect_nodes(objects: &[Value]) -> BTreeMap<String, NodeRef> {
+    let mut nodes = BTreeMap::new();
+    for object in objects {
+        let Some(id) = object.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(kind) = object.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+
+        if let Some(entity_kind) = entity_kind_of(kind) {
+            if let Some(name) = object.get("name").and_then(Value::as_str) {
+                nodes.insert(
+                    id.to_owned(),
+                    NodeRef::Entity(entity_id_for(entity_kind, name)),
+                );
+            }
+        } else if is_observable_type(kind)
+            && let Ok(observable) = observable_of(object, kind)
+        {
+            nodes.insert(id.to_owned(), NodeRef::Observable(observable.id()));
+        }
+    }
+    nodes
+}
+
+/// The canonical entity identifier for a kind and name.
+///
+/// One function, called by both the mapper and the node collector, so the two cannot drift. Two
+/// places deriving "the same" identifier differently is how an edge ends up pointing at a record
+/// that was written under a different key.
+fn entity_id_for(kind: EntityKind, name: &str) -> Id<Entity> {
+    Id::derive(&[kind.as_str(), &name.to_lowercase()])
 }

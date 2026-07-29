@@ -663,6 +663,23 @@ impl StoreRead for SqliteStore {
     fn quarantine_occurrences(&self) -> Result<u64> {
         self.scalar("SELECT COALESCE(SUM(occurrences), 0) FROM quarantine")
     }
+
+    fn graph_version(&self) -> Result<u64> {
+        self.scalar("SELECT version FROM graph_meta WHERE id = 1")
+    }
+
+    fn entity_exists(&self, id: Id<Entity>) -> Result<bool> {
+        let found: Option<i64> = self
+            .connection
+            .query_row(
+                "SELECT 1 FROM entities WHERE id = ?1",
+                params![id.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| StorageError::query("checking whether an entity exists", error))?;
+        Ok(found.is_some())
+    }
 }
 
 impl IntelligenceStore for SqliteStore {
@@ -826,6 +843,58 @@ impl SqliteWriter<'_> {
         Ok(())
     }
 
+    /// Bump the graph's material-change counter.
+    ///
+    /// Called only when an upsert actually changed something. A version that ticked on every write
+    /// would answer "somebody ran an import" rather than "has anything changed".
+    fn touch_graph(&self, outcome: UpsertOutcome) -> Result<UpsertOutcome> {
+        if outcome.changed() {
+            self.transaction
+                .execute(
+                    "UPDATE graph_meta SET version = version + 1, last_changed_at = ?1 WHERE id = 1",
+                    params![now_rfc3339()],
+                )
+                .map_err(|error| StorageError::query("incrementing the graph version", error))?;
+        }
+        Ok(outcome)
+    }
+
+    /// Refuse an edge whose endpoint names an entity that does not exist.
+    ///
+    /// Observable endpoints are content-addressed — their identifier is a function of their value,
+    /// so there is nothing to dangle from. Entity endpoints name a row, and a row that is not there
+    /// makes traversal silently return nothing rather than fail.
+    fn require_node(
+        &self,
+        kind: &'static str,
+        id: &str,
+        endpoint: &'static str,
+        node: &NodeRef,
+    ) -> Result<()> {
+        let NodeRef::Entity(entity) = node else {
+            return Ok(());
+        };
+        let found: Option<i64> = self
+            .transaction
+            .query_row(
+                "SELECT 1 FROM entities WHERE id = ?1",
+                params![entity.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(|error| StorageError::query("checking an edge endpoint", error))?;
+
+        if found.is_none() {
+            return Err(StorageError::DanglingEdge {
+                kind,
+                id: id.to_owned(),
+                endpoint,
+                missing: entity.to_string(),
+            });
+        }
+        Ok(())
+    }
+
     /// Read the stored document for `id`, so an identical write can be reported as `Unchanged`.
     fn existing(&self, table_sql: &str, id: &str) -> Result<Option<String>> {
         self.transaction
@@ -907,7 +976,7 @@ impl StoreWrite for SqliteWriter<'_> {
             )
             .map_err(|error| StorageError::query("writing an entity", error))?;
 
-        Ok(if existed.is_some() {
+        self.touch_graph(if existed.is_some() {
             UpsertOutcome::Updated
         } else {
             UpsertOutcome::Inserted
@@ -916,6 +985,8 @@ impl StoreWrite for SqliteWriter<'_> {
 
     fn upsert_relationship(&mut self, relationship: &Relationship) -> Result<UpsertOutcome> {
         let id = relationship.id.to_string();
+        self.require_node("relationship", &id, "source", &relationship.source)?;
+        self.require_node("relationship", &id, "target", &relationship.target)?;
         let document = encode("relationship", &id, relationship)?;
         let existed = self.existing(GET_RELATIONSHIP, &id)?;
 
@@ -944,7 +1015,7 @@ impl StoreWrite for SqliteWriter<'_> {
             )
             .map_err(|error| StorageError::query("writing a relationship", error))?;
 
-        Ok(if existed.is_some() {
+        self.touch_graph(if existed.is_some() {
             UpsertOutcome::Updated
         } else {
             UpsertOutcome::Inserted
@@ -953,6 +1024,7 @@ impl StoreWrite for SqliteWriter<'_> {
 
     fn upsert_claim(&mut self, claim: &Claim) -> Result<UpsertOutcome> {
         let id = claim.id.to_string();
+        self.require_node("claim", &id, "subject", &claim.subject)?;
         let document = encode("claim", &id, claim)?;
         let existed = self.existing(GET_CLAIM, &id)?;
 
@@ -979,7 +1051,7 @@ impl StoreWrite for SqliteWriter<'_> {
             )
             .map_err(|error| StorageError::query("writing a claim", error))?;
 
-        Ok(if existed.is_some() {
+        self.touch_graph(if existed.is_some() {
             UpsertOutcome::Updated
         } else {
             UpsertOutcome::Inserted
@@ -988,6 +1060,7 @@ impl StoreWrite for SqliteWriter<'_> {
 
     fn upsert_sighting(&mut self, sighting: &Sighting) -> Result<UpsertOutcome> {
         let id = sighting.id.to_string();
+        self.require_node("sighting", &id, "subject", &sighting.subject)?;
         let document = encode("sighting", &id, sighting)?;
         let existed = self.existing(GET_SIGHTING, &id)?;
 
@@ -1021,7 +1094,7 @@ impl StoreWrite for SqliteWriter<'_> {
             )
             .map_err(|error| StorageError::query("writing a sighting", error))?;
 
-        Ok(if existed.is_some() {
+        self.touch_graph(if existed.is_some() {
             UpsertOutcome::Updated
         } else {
             UpsertOutcome::Inserted

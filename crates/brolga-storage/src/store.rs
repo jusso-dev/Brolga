@@ -353,6 +353,26 @@ pub trait StoreRead {
     /// [`crate::StorageError::Query`] for a backend failure.
     fn quarantine_occurrences(&self) -> Result<u64>;
 
+    /// The graph's material-change version.
+    ///
+    /// Increments when a graph record is inserted or changed, and not when an upsert is a no-op —
+    /// so comparing it answers "has anything actually changed?" rather than "did somebody run an
+    /// import?".
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn graph_version(&self) -> Result<u64>;
+
+    /// Whether an entity exists, without decoding it.
+    ///
+    /// Exists so referential integrity can be checked cheaply on every edge write.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn entity_exists(&self, id: Id<Entity>) -> Result<bool>;
+
     /// How many objects are retained.
     ///
     /// # Errors
