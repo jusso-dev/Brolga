@@ -1,0 +1,6 @@
+detection:
+  selection:
+    A|contains: x
+  condition: selection
+logsource:
+  product: p
