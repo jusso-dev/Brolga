@@ -70,6 +70,7 @@
 pub mod canon;
 pub mod detect;
 pub mod error;
+pub mod formats;
 pub mod parser;
 pub mod pipeline;
 pub mod registry;

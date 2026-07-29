@@ -1,0 +1,34 @@
+{
+  "type": "bundle",
+  "id": "bundle--attack-enterprise-sample",
+  "objects": [
+    {
+      "type": "attack-pattern",
+      "spec_version": "2.1",
+      "id": "attack-pattern--d1fcf083-a721-4223-aedf-bf8960798d62",
+      "created": "2020-03-15T00:33:41.novalid",
+      "name": "Scheduled Task",
+      "description": "Adversaries may abuse task scheduling.",
+      "x_mitre_aliases": ["schtasks"],
+      "external_references": [
+        { "source_name": "mitre-attack", "external_id": "T1053.005" },
+        { "source_name": "capec", "external_id": "CAPEC-557" }
+      ]
+    },
+    {
+      "type": "intrusion-set",
+      "spec_version": "2.1",
+      "id": "intrusion-set--f047ee18-7985-4946-8bfb-4ed754d3a0dd",
+      "name": "APT-EXAMPLE",
+      "aliases": ["APT-EXAMPLE", "Example Group"]
+    },
+    {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--attack-0001",
+      "relationship_type": "uses",
+      "source_ref": "intrusion-set--f047ee18-7985-4946-8bfb-4ed754d3a0dd",
+      "target_ref": "attack-pattern--d1fcf083-a721-4223-aedf-bf8960798d62"
+    }
+  ]
+}
