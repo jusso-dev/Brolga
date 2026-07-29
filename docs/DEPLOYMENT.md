@@ -108,17 +108,32 @@ copy it in — see [Reading and writing the volume](#reading-and-writing-the-vol
 
 Brolga reads STIX 2.0 and 2.1 and ATT&CK bundles, MISP events, warning lists and feed exports,
 Sigma rules, YARA rules, OpenIOC definitions, IODEF incident documents, CEF/LEEF/syslog telemetry,
-and CSV/TSV/JSON/NDJSON/plain-text indicator lists. Format is detected per file from its contents,
+and CSV/TSV/JSON/NDJSON/plain-text indicator lists. It also reads vulnerability and software
+intelligence: OSV records, NVD JSON in both the 2.0 API and retired 1.1 feed shapes, CSAF 2.0 and
+CVRF 1.2 vendor advisories, the CISA KEV catalogue, CycloneDX and SPDX JSON bills of materials, and
+SARIF static-analysis results. Format is detected per file from its contents,
 so a mixed batch is fine and a mislabelled extension does not mislead it.
 
-Detection content — Sigma, YARA, OpenIOC — becomes `detection_rule` entities. Brolga **stores rules
+A vulnerability is keyed on its CVE wherever one is named — including when it is named only in an
+advisory's alias list — so the same flaw published as a GHSA record, an NVD entry, and a KEV listing
+is one entity with all three sources' claims on it. A package is keyed on its package URL, so a
+component named by an SBOM and the same component named by an advisory meet.
+
+Two things Brolga deliberately does not do with this data. It does not compare versions: an affected
+range is stored as published, and deciding whether an installed version falls inside it needs a
+per-ecosystem comparator that Brolga does not have. And a CISA KEV listing is recorded as *dated
+evidence from a named catalogue* — never as a disposition, and never as an exploitation relationship —
+because KEV membership means CISA saw exploitation in the wild on a date, not that every deployment
+of the affected product is exploitable now.
+
+Detection content — Sigma, YARA, OpenIOC, and SARIF analysis rules — becomes `detection_rule` entities. Brolga **stores rules
 and never runs them**: no condition is evaluated, no string is matched, no query is translated. A
 rule's detection logic is read only where it names a whole value under plain equality, and every
 field that was not read is recorded so `brolga show` can say why a rule contributed no observables.
 
 XML documents carrying a `<!DOCTYPE>` are refused outright rather than parsed with entity expansion
 turned off. A DTD is what entity-expansion and external-entity attacks need, and no legitimate
-OpenIOC or IODEF document has one.
+OpenIOC, IODEF, or CVRF document has one.
 
 Drop files into the `feeds/` directory next to `docker-compose.yml`. It is bind-mounted at
 `/feeds` **read-only**, because Brolga only ever reads them and a writable mount would let a bug

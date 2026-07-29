@@ -120,13 +120,13 @@ mod tests {
         let entity = schema_for::<Entity>();
         assert_eq!(
             entity.get("$id").and_then(Value::as_str),
-            Some("urn:brolga:schema:brolga.entity/1.1"),
+            Some("urn:brolga:schema:brolga.entity/1.2"),
         );
         assert_eq!(
             entity
                 .get("x-brolga-schema-version")
                 .and_then(Value::as_str),
-            Some("brolga.entity/1.1"),
+            Some("brolga.entity/1.2"),
         );
     }
 

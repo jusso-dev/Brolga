@@ -33,9 +33,16 @@ source bytes retained content-addressed, strict and permissive modes, and a quar
 what it could not accept.
 
 **`brolga ingest` works.** Point it at a STIX bundle, a MISP export, a Sigma or YARA rule, an
-OpenIOC or IODEF document, a CEF/LEEF/syslog file, or a CSV/NDJSON/plain-text
-indicator list and the records land in a local SQLite database, with the original bytes retained
-content-addressed and anything unreadable kept in quarantine with a reason.
+OpenIOC or IODEF document, a CEF/LEEF/syslog file, a CSV/NDJSON/plain-text
+indicator list, a vulnerability feed (OSV, NVD, CSAF, CVRF, CISA KEV), a software bill of materials
+(CycloneDX, SPDX JSON), or a SARIF scan result, and the records land in a local SQLite database, with
+the original bytes retained content-addressed and anything unreadable kept in quarantine with a
+reason.
+
+Vulnerability data is stored, not evaluated. An affected version range is kept as the publisher wrote
+it; Brolga does not decide whether `2.14.1` falls inside `[2.0-beta9, 2.15.0)`, because that needs a
+per-ecosystem version comparator and a wrong one reports a vulnerable estate as clean. Brolga is not
+a scanner.
 
 ## Try it
 
@@ -94,6 +101,8 @@ so this section cannot drift from the code without a test failing.
 | Capability | Status |
 | --- | --- |
 | Ingest — STIX 2.0/2.1, MISP, Sigma, YARA, OpenIOC, IODEF, CEF/LEEF/syslog, CSV/NDJSON | working |
+| Ingest — OSV, NVD JSON 2.0/1.1, CSAF 2.0, CVRF 1.2, CISA KEV, CycloneDX, SPDX JSON, SARIF | working |
+| Vulnerability matching — deciding whether an installed version falls in an affected range | **not supported**; ranges are stored as published text, not compared |
 | Connectors — TAXII 2.0/2.1, MISP, OpenCTI, read-only | working |
 | Graph — dedup, resolution, contradictions, decay, traversal, checkpoints | working |
 | Context packs — versioned, fingerprinted, evidence-cited | working |
