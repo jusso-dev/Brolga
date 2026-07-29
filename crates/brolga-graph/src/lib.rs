@@ -39,9 +39,15 @@
 //!   component here rather than keeping a second opinion about what "old" means. Nothing decays to
 //!   nought, because an indicator that has aged out was observed by somebody and one that was never
 //!   asserted was not.
+//! - [`checkpoint`] — telling a change from churn. A re-import that changed nothing, a
+//!   re-serialisation, a connector cursor moving forward: a delta that reports those is a delta
+//!   nobody reads, and an operator who has learned to skim the delta skims the line that says an
+//!   attribution was revoked. So materiality is defined once, its exclusions are written down, and
+//!   a no-op re-import produces nothing at all.
 
 #![forbid(unsafe_code)]
 
+pub mod checkpoint;
 pub mod confidence;
 pub mod contradiction;
 pub mod decay;
@@ -49,6 +55,14 @@ pub mod dedup;
 pub mod resolve;
 pub mod traverse;
 
+pub use checkpoint::{
+    CHECKPOINT_ALGORITHM, CHECKPOINT_ALGORITHM_VERSION, CaptureError, Change, ChangeCategory,
+    Checkpoint, CheckpointRequest, ConfidenceBand, Delta, DeltaLimits, DeltaRefused,
+    DeltaTruncation, EXCLUDED_FROM_MATERIALITY, FacetChange, FacetState, MaterialFacet,
+    RecordClass, RecordFingerprint, RecordKey, SourceSyncState, Succession, SuccessionKind,
+    VersionChange, capture, compare, fingerprint_entity, fingerprint_observable,
+    fingerprint_relationship, shape_of,
+};
 pub use confidence::{
     AnalystOverride, COMPONENT_CORROBORATION, COMPONENT_INFORMATION_CREDIBILITY, COMPONENT_RECENCY,
     COMPONENT_SOURCE_RELIABILITY, COMPONENT_STANCE, CONFIDENCE_ALGORITHM,
