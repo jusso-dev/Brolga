@@ -61,9 +61,29 @@ detection with explainable confidence components, configurable temporal decay, b
 typed search, and checkpoints with material deltas. Every decision it makes is a record carrying what
 was compared, which algorithm and version decided it, and why.
 
-**None of the graph layer is reachable from a command.** `brolga-cli` does not depend on
-`brolga-graph`: it is a Rust library and nothing else until [#34](https://github.com/jusso-dev/Brolga/issues/34)
-in `v0.5.0`.
+The graph is reachable from the binary. `brolga search` finds entities by typed filters,
+`brolga neighbours` walks out from one within a stated budget, and `brolga checkpoint take|diff`
+answers "what changed since last week" — a delta that reports only *material* change, so a re-import
+of the same file reports nothing.
+
+```console
+$ brolga search --kind intrusion_set
+entity:8fd8cd7f-…  intrusion_set  active  Bunyip Panda
+
+$ brolga neighbours entity:8fd8cd7f-… --depth 2
+ 0  entity:8fd8cd7f-…
+ 1  entity:1059cc07-…
+ 1  entity:cee261e1-…
+3 record(s), 2 edge(s)
+
+$ brolga checkpoint take monday --from entity:8fd8cd7f-…
+$ brolga checkpoint diff monday friday
+changed  entity/entity:8fd8cd7f-…  [names, sources]
+changed  entity/entity:cee261e1-…  [sources]
+```
+
+Every change names the **facets** that moved, because "changed" on its own cannot tell a re-attested
+source from a renamed actor, and those call for different responses.
 
 **`brolga context` still exits `5`.** The compression engine is `v0.4.0`. There is no HTTP API, no
 MCP server, no connector, and nothing fetches a feed on a schedule — ingestion reads files you give
