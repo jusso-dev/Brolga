@@ -1,0 +1,4 @@
+indicator,first_seen,confidence
+evil.example,2024-05-01,80
+192.0.2.10,2024-05-02,60
+not an indicator,2024-05-03,10
