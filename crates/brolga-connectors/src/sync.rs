@@ -34,6 +34,7 @@ use brolga_security::CancellationToken;
 use brolga_storage::{ConnectorCursor, CursorStatus, IntelligenceStore, SqliteStore, StoreRead};
 
 use crate::error::ConnectorError;
+use crate::misp::{MISP_CONNECTOR, MispClient, MispFeed, MispInstance};
 use crate::taxii::TaxiiClient;
 
 /// This connector's name, and the first half of every cursor key it writes.
@@ -363,6 +364,205 @@ fn bounded_publisher(api_root: &str) -> String {
         "taxii".to_owned()
     } else {
         value.to_owned()
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+// MISP
+// ---------------------------------------------------------------------------------------------
+
+/// Which feed of which instance a run is reading.
+///
+/// A pair rather than two loose arguments, for the same reason as [`FeedRef`]: an instance and a
+/// feed are only meaningful together, and a cursor key built from a mismatched pair would read one
+/// instance's position against another's data.
+#[derive(Debug, Clone, Copy)]
+pub struct MispTarget<'a> {
+    /// The instance to read.
+    pub instance: &'a MispInstance,
+    /// Which of its feeds.
+    pub feed: MispFeed,
+}
+
+impl<'a> MispTarget<'a> {
+    /// Name a target.
+    #[must_use]
+    pub const fn new(instance: &'a MispInstance, feed: MispFeed) -> Self {
+        Self { instance, feed }
+    }
+}
+
+/// Run one feed of one MISP instance to completion, or to a bound.
+///
+/// The same ordering as [`sync_collection`], for the same reason: fetch, ingest, then advance the
+/// cursor. See the module documentation.
+///
+/// The cursor is keyed on `(misp, "<instance>/<feed>")`, so two instances never share a position.
+/// A shared cursor would make a second instance resume from wherever the first got to and skip
+/// everything published before that — silently, since a sync that fetched nothing looks identical
+/// to a feed with nothing new.
+///
+/// # Errors
+///
+/// Returns the first failure. The cursor is left wherever the last successfully stored page put it.
+pub fn sync_misp_feed(
+    client: &MispClient<'_>,
+    store: &mut SqliteStore,
+    pipeline: &Pipeline,
+    target: MispTarget<'_>,
+    now: Timestamp,
+    options: SyncOptions,
+    cancel: &CancellationToken,
+) -> Result<SyncReport, ConnectorError> {
+    let MispTarget { instance, feed } = target;
+    let stamp = now.to_rfc3339();
+    let feed_key = feed.feed_key(&instance.name);
+
+    let mut cursor = store
+        .connector_cursor(MISP_CONNECTOR, &feed_key)
+        .map_err(|error| ConnectorError::Storage {
+            url: instance.base_url.clone(),
+            reason: error.to_string(),
+        })?
+        .unwrap_or_else(|| ConnectorCursor::starting(MISP_CONNECTOR, &feed_key, &stamp));
+
+    let mut report = SyncReport {
+        feed: feed_key,
+        pages: 0,
+        objects: 0,
+        inserted: 0,
+        quarantined: 0,
+        cursor: cursor.clone(),
+        not_modified: false,
+    };
+
+    // MISP pages are one-based; a request for page 0 returns the whole result set on some versions,
+    // which would quietly ignore the page size.
+    let mut page_number = 1_usize;
+    let mut etag = if options.use_etag {
+        cursor.etag.clone()
+    } else {
+        None
+    };
+
+    loop {
+        if cancel.is_cancelled() {
+            cursor.last_status = CursorStatus::Partial;
+            cursor.last_run_at = stamp.clone();
+            persist(store, &cursor, &instance.base_url)?;
+            report.cursor = cursor;
+            return Ok(report);
+        }
+
+        if report.pages >= options.max_pages {
+            cursor.last_status = CursorStatus::Partial;
+            cursor.last_run_at = stamp.clone();
+            persist(store, &cursor, &instance.base_url)?;
+            report.cursor = cursor;
+            return Ok(report);
+        }
+
+        let fetched = client.page(
+            instance,
+            feed,
+            cursor.added_after.as_deref(),
+            page_number,
+            options.page_size,
+            etag.as_deref(),
+        );
+
+        let page = match fetched {
+            Ok(Some(page)) => page,
+            Ok(None) => {
+                cursor.last_status = CursorStatus::NotModified;
+                cursor.last_run_at = stamp.clone();
+                persist(store, &cursor, &instance.base_url)?;
+                report.not_modified = true;
+                report.cursor = cursor;
+                return Ok(report);
+            }
+            Err(error) => {
+                cursor.last_status = CursorStatus::Failed;
+                cursor.last_run_at = stamp.clone();
+                let _ = persist(store, &cursor, &instance.base_url);
+                return Err(error);
+            }
+        };
+
+        report.pages = report.pages.saturating_add(1);
+        report.objects = report.objects.saturating_add(page.record_count);
+
+        if page.record_count == 0 {
+            cursor.last_status = CursorStatus::Complete;
+            cursor.etag = page.etag.or(cursor.etag);
+            cursor.last_run_at = stamp.clone();
+            persist(store, &cursor, &instance.base_url)?;
+            report.cursor = cursor;
+            return Ok(report);
+        }
+
+        let document = Document {
+            bytes: &page.body,
+            media_type: MediaType::new("application/vnd.misp+json").map_err(|error| {
+                ConnectorError::Storage {
+                    url: page.url.clone(),
+                    reason: error.to_string(),
+                }
+            })?,
+            file_name: None,
+            origin: SourceOrigin::NetworkFeed {
+                // The instance's *name*, not its URL. Provenance should say which source published
+                // a record, and two instances behind one hostname are still two sources.
+                publisher: ShortText::new(bounded_publisher(&instance.name)).map_err(|error| {
+                    ConnectorError::Storage {
+                        url: page.url.clone(),
+                        reason: error.to_string(),
+                    }
+                })?,
+                location: None,
+            },
+            retrieved_at: now,
+        };
+
+        let ingested = match pipeline.ingest_batch(store, &[document], cancel) {
+            Ok(ingested) => ingested,
+            Err(error) => {
+                cursor.last_status = CursorStatus::Failed;
+                cursor.last_run_at = stamp.clone();
+                let _ = persist(store, &cursor, &instance.base_url);
+                return Err(ConnectorError::Storage {
+                    url: page.url,
+                    reason: error.to_string(),
+                });
+            }
+        };
+
+        report.inserted = report.inserted.saturating_add(ingested.inserted);
+        report.quarantined = report.quarantined.saturating_add(ingested.rejected);
+
+        // Only now.
+        if let Some(newest) = page.newest_timestamp {
+            cursor.added_after = Some(newest);
+        }
+        cursor.etag = page.etag.clone().or(cursor.etag);
+        cursor.records_seen = cursor
+            .records_seen
+            .saturating_add(u64::try_from(page.record_count).unwrap_or(0));
+        cursor.last_run_at = stamp.clone();
+        cursor.last_status = if page.more {
+            CursorStatus::Partial
+        } else {
+            CursorStatus::Complete
+        };
+        persist(store, &cursor, &instance.base_url)?;
+
+        if !page.more {
+            report.cursor = cursor;
+            return Ok(report);
+        }
+
+        page_number = page_number.saturating_add(1);
+        etag = None;
     }
 }
 

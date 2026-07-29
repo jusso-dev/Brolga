@@ -89,6 +89,11 @@ impl Reply {
 /// What a client asked for, so a test can assert on it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recorded {
+    /// The request method.
+    ///
+    /// Recorded so a connector claiming to be read-only can be *shown* to be, rather than asserted
+    /// to be. `every_request_the_connector_makes_is_a_read` is the test that uses it.
+    pub method: String,
     /// The request target, including its query string.
     pub target: String,
     /// Request headers, lower-cased.
@@ -187,6 +192,11 @@ fn handle(
     if reader.read_line(&mut request_line)? == 0 {
         return Ok(());
     }
+    let method = request_line
+        .split_whitespace()
+        .next()
+        .unwrap_or("?")
+        .to_owned();
     let target = request_line
         .split_whitespace()
         .nth(1)
@@ -220,6 +230,7 @@ fn handle(
 
     if let Ok(mut log) = recorded.lock() {
         log.push(Recorded {
+            method,
             target: target.clone(),
             headers,
         });
