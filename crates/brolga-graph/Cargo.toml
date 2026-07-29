@@ -18,6 +18,7 @@ brolga-model = { version = "0.1.0", path = "../brolga-model" }
 brolga-security = { version = "0.1.0", path = "../brolga-security" }
 brolga-storage = { version = "0.1.0", path = "../brolga-storage" }
 serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
 thiserror = "2.0.19"
 
 [dev-dependencies]
