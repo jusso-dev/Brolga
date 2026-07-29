@@ -52,6 +52,7 @@ pub mod confidence;
 pub mod contradiction;
 pub mod decay;
 pub mod dedup;
+pub mod rank;
 pub mod resolve;
 pub mod traverse;
 
@@ -82,6 +83,10 @@ pub use decay::{
 pub use dedup::{
     DEDUP_ALGORITHM, DEDUP_ALGORITHM_VERSION, DedupDecision, DedupVerdict, Deduplicator,
     Observation, RecordLineage,
+};
+pub use rank::{
+    Candidate, Cluster, Factor, FactorWeights, Ranked, RankingPlan, Verdict, candidate_from_claim,
+    rank,
 };
 pub use resolve::{
     ManualOperation, MatchSignal, NAME_SENSITIVE_KINDS, OperationKind, OperationRefused,
