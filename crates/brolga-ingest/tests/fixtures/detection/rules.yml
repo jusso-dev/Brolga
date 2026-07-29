@@ -1,0 +1,42 @@
+title: Suspicious outbound to known C2
+id: 6f3e2a10-9b4c-4d5e-8f01-2a3b4c5d6e7f
+status: experimental
+description: Detects a beacon to a published C2 address.
+author: Analyst
+date: 2024/01/01
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+logsource:
+  category: proxy
+  product: zeek
+detection:
+  selection:
+    DestinationIp:
+      - 198.51.100.50
+      - 198.51.100.51
+    DestinationHostname: c2.example.net
+    c-uri: https://c2.example.net/beacon
+  filter:
+    DestinationHostname|contains: internal
+    Image: C:\Windows\System32\svchost.exe
+    CommandLine: -k netsvcs
+  condition: selection and not filter
+falsepositives:
+  - Legitimate administrative traffic
+---
+title: Deprecated rule
+id: 11111111-2222-4333-8444-555555555555
+status: deprecated
+logsource:
+  product: windows
+detection:
+  selection:
+    DestinationIp: not-an-address
+  condition: selection
+---
+title: Rule with no detection block
+id: 99999999-9999-4999-8999-999999999999
+logsource:
+  product: windows

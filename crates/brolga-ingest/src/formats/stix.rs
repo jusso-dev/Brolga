@@ -32,6 +32,29 @@
 //! - **`marking-definition`** — TLP markings are resolved and propagate to every object that
 //!   references them.
 //!
+//! # STIX 2.0 and 2.1 are one reader, and the differences are named
+//!
+//! 2.0 is not a dialect of 2.1 that can be read by ignoring a few fields — it puts the same
+//! information in different places, and a reader that pretended otherwise would silently drop the
+//! parts that moved:
+//!
+//! - **`labels` carried the vocabularies.** 2.1 split them into `indicator_types`,
+//!   `malware_types`, and so on. An indicator's assessment lives in `labels` in 2.0, so a reader
+//!   that only looked at `indicator_types` would map every 2.0 indicator with no disposition —
+//!   present, and answering `unknown`.
+//! - **Observables were not top-level.** 2.0 has no SCOs; a cyber observable exists only inside an
+//!   `observed-data` object's `objects` dictionary. Ignoring `observed-data` would make a 2.0
+//!   bundle of observations contribute nothing, which is [#95](https://github.com/jusso-dev/Brolga/issues/95)
+//!   again in a different spelling.
+//! - **`spec_version` moved.** In 2.0 it is on the bundle; in 2.1 it is on each object. The
+//!   version is read from either, and an object may state its own.
+//! - **`pattern_type` did not exist.** A 2.0 pattern is always STIX patterning, so its absence is
+//!   not evidence of some other language.
+//!
+//! What is *not* done: no 2.0 object is rewritten into its 2.1 shape before mapping. Both versions
+//! map directly onto the canonical model, because a 2.0-to-2.1 upgrade step would be a second
+//! lossy translation whose losses nobody would see.
+//!
 //! # `revoked` and `modified` are not "delete"
 //!
 //! A revoked STIX object is not absent; it is an object whose publisher has said it should no longer
@@ -53,8 +76,8 @@ use std::collections::BTreeMap;
 
 use brolga_model::{
     Assertion, Claim, Disposition, Entity, EntityKind, Id, LifecycleStatus, Marking, MarkingSet,
-    NodeRef, Observable, RecordOrigin, Relationship, RelationshipKind, ShortText, TemporalState,
-    Timestamp, TlpLevel, UntrustedText,
+    NodeRef, Observable, RecordOrigin, Relationship, RelationshipKind, ShortText, Sighting,
+    SightingCount, TemporalState, Timestamp, TlpLevel, UntrustedText,
 };
 use serde_json::Value;
 
@@ -86,6 +109,14 @@ pub const MAX_FAN_OUT: usize = 1024;
 /// is a record-amplification shape — every entry becomes up to two claims — and is refused whole
 /// rather than truncated, because a truncated list silently drops assessments the publisher made.
 pub const MAX_INDICATOR_TYPES: usize = 16;
+
+/// Most observables read from one `observed-data` object.
+///
+/// STIX 2.0 carries cyber observables inside this dictionary rather than as top-level objects, so
+/// it is the one place a single object legitimately holds many. Each becomes a claim and a
+/// sighting, which makes it the largest amplification surface in a bundle; over the bound the
+/// object is refused whole rather than truncated.
+pub const MAX_OBSERVED_OBJECTS: usize = 256;
 
 /// A STIX 2.1 bundle reader.
 #[derive(Debug, Default, Clone, Copy)]
@@ -140,11 +171,14 @@ impl IntelligenceParser for StixParser {
                 DetectionConfidence::Certain,
                 "declares `\"type\": \"bundle\"`",
             )
-        } else if compact.contains("\"spec_version\":\"2.1\"") {
+        } else if compact.contains("\"spec_version\":\"2.") {
+            // Both 2.0 and 2.1. In 2.0 the field is on the bundle and in 2.1 it is on each object,
+            // so matching the family rather than one spelling is what lets a bare 2.0 object be
+            // recognised at all.
             candidate(
                 self,
                 DetectionConfidence::Strong,
-                "declares STIX spec_version 2.1",
+                "declares a STIX 2.x spec_version",
             )
         } else if hint.has_extension("stix") {
             candidate(self, DetectionConfidence::Strong, "file extension is .stix")
@@ -196,6 +230,9 @@ impl IntelligenceParser for StixParser {
         // record that was never written — which storage now refuses as a dangling edge, and which
         // before that refusal would have made traversal silently return nothing.
         let nodes = collect_nodes(&objects);
+        // And the top-level SCOs by identifier, because a 2.1 `observed-data` names its artefacts
+        // by reference. The node map holds identifiers, and a sighting needs the observable itself.
+        let scos = collect_scos(&objects);
 
         let mut out = ParseOutput::default();
         let mut fan_out: BTreeMap<String, usize> = BTreeMap::new();
@@ -205,7 +242,15 @@ impl IntelligenceParser for StixParser {
                 .check_cancelled()
                 .map_err(|error| ParseError::new(error.to_string()))?;
 
-            match map_object(object, &origin, &markings, &nodes, &mut fan_out, &limits) {
+            match map_object(
+                object,
+                &origin,
+                &markings,
+                &nodes,
+                &scos,
+                &mut fan_out,
+                &limits,
+            ) {
                 Ok(records) => out.records.extend(records),
                 Err(rejection) => out.rejected.push(rejection.into_rejected(index)),
             }
@@ -388,6 +433,7 @@ fn map_object(
     origin: &RecordOrigin,
     markings: &BTreeMap<String, Marking>,
     nodes: &BTreeMap<String, Vec<NodeRef>>,
+    scos: &BTreeMap<String, Observable>,
     fan_out: &mut BTreeMap<String, usize>,
     limits: &brolga_security::InputLimits,
 ) -> Result<Vec<ParsedRecord>, Rejection> {
@@ -401,6 +447,7 @@ fn map_object(
         "marking-definition" => Ok(Vec::new()),
         "relationship" => map_relationship(object, origin, markings, nodes, fan_out),
         "indicator" => map_indicator(object, origin, markings, limits),
+        "observed-data" => map_observed_data(object, origin, markings, nodes, scos),
         "bundle" => Err(Rejection::new(
             "nested_bundle",
             "a bundle nested inside a bundle is not valid STIX 2.1",
@@ -700,8 +747,12 @@ fn map_indicator(
         }
     }
 
+    // `labels` is where STIX 2.0 kept this vocabulary; 2.1 split it out into `indicator_types`.
+    // Reading only the 2.1 spelling would map every 2.0 indicator with no disposition at all —
+    // present in the graph, and answering `unknown` about something a publisher assessed.
     let indicator_types = object
         .get("indicator_types")
+        .or_else(|| object.get("labels"))
         .and_then(Value::as_array)
         .map(Vec::as_slice)
         .unwrap_or_default();
@@ -754,6 +805,210 @@ fn map_indicator(
     }
 
     Ok(records)
+}
+
+/// Map an `observed-data` object to sightings of the observables it holds.
+///
+/// This is where STIX 2.0 keeps cyber observables. There are no top-level SCOs in 2.0 at all — an
+/// address exists only inside this object's `objects` dictionary — so a reader that skipped it
+/// would make a 2.0 bundle of observations contribute nothing a lookup could find, which is the
+/// same silent miss `indicator` had.
+///
+/// 2.1 replaced the dictionary with `object_refs` pointing at top-level SCOs. Both are read: the
+/// embedded form directly, the reference form through the bundle's node map, so a 2.1 bundle's
+/// observations become sightings too rather than only the claims its SCOs already produced.
+///
+/// `number_observed` becomes the sighting's count and `first_observed` / `last_observed` its
+/// window — which is what makes this a *sighting* rather than another claim. A claim says somebody
+/// asserted something; a sighting says how many times and when, and that is the difference
+/// corroboration is computed from.
+fn map_observed_data(
+    object: &Value,
+    origin: &RecordOrigin,
+    markings: &BTreeMap<String, Marking>,
+    nodes: &BTreeMap<String, Vec<NodeRef>>,
+    scos: &BTreeMap<String, Observable>,
+) -> Result<Vec<ParsedRecord>, Rejection> {
+    let first_observed = timestamp_field(object, "first_observed")?.ok_or_else(|| {
+        Rejection::new(
+            "missing_first_observed",
+            "`observed-data` has no `first_observed`, so the observation has no window and cannot \
+             be told apart from a re-import of the same one",
+            object,
+        )
+    })?;
+    let last_observed = timestamp_field(object, "last_observed")?.ok_or_else(|| {
+        Rejection::new(
+            "missing_last_observed",
+            "`observed-data` has no `last_observed`, so the observation has no window",
+            object,
+        )
+    })?;
+
+    // Zero is not "unknown". A publisher who wrote `number_observed: 0` said something impossible,
+    // and defaulting it to one would invent an observation.
+    let raw_count = object
+        .get("number_observed")
+        .and_then(Value::as_u64)
+        .unwrap_or(1);
+    let count = SightingCount::new(raw_count).map_err(|error| {
+        Rejection::new(
+            "unusable_number_observed",
+            format!("`number_observed` is not a usable count: {error}"),
+            object,
+        )
+    })?;
+
+    // Resolved through the bundle, never derived from the STIX id. An observer Brolga cannot
+    // resolve is `None` — an unattributed sighting, which is a real and reportable state — rather
+    // than a fabricated entity that would look like corroboration.
+    let observer = object
+        .get("created_by_ref")
+        .and_then(Value::as_str)
+        .and_then(|reference| nodes.get(reference))
+        .and_then(|resolved| resolved.first())
+        .and_then(|node| match node {
+            NodeRef::Entity(id) => Some(*id),
+            // An observer that resolved to an observable is not an observer. `NodeRef` is
+            // `#[non_exhaustive]`, so a future variant falls here too — an unattributed sighting,
+            // which is honest, rather than a guess at which new node kind counts as a witness.
+            _ => None,
+        });
+
+    let observables = observed_observables(object, scos)?;
+    let marking_set = markings_for(object, markings);
+    let revoked = object.get("revoked").and_then(Value::as_bool) == Some(true);
+
+    let mut records = Vec::with_capacity(observables.len().saturating_mul(2));
+    for observable in &observables {
+        let subject = NodeRef::Observable(observable.id());
+
+        let mut sighting = Sighting::new(
+            subject,
+            observer,
+            count,
+            first_observed,
+            last_observed,
+            origin.clone(),
+        )
+        .map_err(|error| {
+            Rejection::new(
+                "impossible_observation_window",
+                format!("the observation window is impossible: {error}"),
+                object,
+            )
+        })?;
+        sighting.markings = marking_set.clone();
+        if revoked {
+            sighting.status = LifecycleStatus::Revoked;
+        }
+        records.push(ParsedRecord::Sighting(Box::new(sighting)));
+
+        // And the assertion that the artefact was seen at all, so an observable from a 2.0 bundle
+        // is reachable the same way one from a 2.1 SCO is. A lookup that found sightings but no
+        // claims would report a disposition of `unknown` for something under active observation.
+        let name = ShortText::new("stix.observed_data").map_err(|error| {
+            Rejection::new("unusable_attribute_name", error.to_string(), object)
+        })?;
+        let value = UntrustedText::new(bounded(
+            &observable.canonical_value(),
+            UntrustedText::MAX_BYTES,
+        ))
+        .map_err(|error| Rejection::new("unusable_attribute_value", error.to_string(), object))?;
+
+        let mut claim = Claim::new(
+            subject,
+            Assertion::Attribute { name, value },
+            origin.clone(),
+        );
+        claim.markings = marking_set.clone();
+        claim.temporal =
+            TemporalState::observed(first_observed, last_observed).map_err(|error| {
+                Rejection::new(
+                    "impossible_observation_window",
+                    format!("the observation window is impossible: {error}"),
+                    object,
+                )
+            })?;
+        if revoked {
+            claim.status = LifecycleStatus::Revoked;
+        }
+        records.push(ParsedRecord::Claim(Box::new(claim)));
+    }
+
+    Ok(records)
+}
+
+/// The observables an `observed-data` names, by either the 2.0 or the 2.1 spelling.
+fn observed_observables(
+    object: &Value,
+    scos: &BTreeMap<String, Observable>,
+) -> Result<Vec<Observable>, Rejection> {
+    let mut observables = Vec::new();
+
+    // STIX 2.0: an embedded dictionary keyed by an arbitrary index string. Iterated through the
+    // map's own ordering, which `serde_json` keeps sorted, so two imports of one bundle produce the
+    // same records in the same order.
+    if let Some(embedded) = object.get("objects").and_then(Value::as_object) {
+        if embedded.len() > MAX_OBSERVED_OBJECTS {
+            return Err(Rejection::new(
+                "observed_objects_exceeded",
+                format!(
+                    "`observed-data` holds {} objects, over the {MAX_OBSERVED_OBJECTS} limit; it \
+                     is refused whole rather than truncated, because a truncated observation \
+                     reports fewer artefacts than were seen",
+                    embedded.len()
+                ),
+                object,
+            ));
+        }
+        for value in embedded.values() {
+            let Some(kind) = value.get("type").and_then(Value::as_str) else {
+                continue;
+            };
+            // An embedded object of a type this parser does not canonicalise is skipped rather
+            // than failing the observation: unlike a pattern, the dictionary is a *set* of
+            // artefacts, and the ones Brolga understands are still true. What was skipped is
+            // recorded below so the omission is not silent.
+            if is_observable_type(kind)
+                && let Ok(observable) = observable_of(value, kind)
+            {
+                observables.push(observable);
+            }
+        }
+    }
+
+    // STIX 2.1: references to top-level SCOs, resolved through the bundle rather than derived from
+    // the identifier. A reference to an object that is not in the bundle names an artefact nobody
+    // supplied, and inventing one from its id would record an observation of a value Brolga never
+    // saw.
+    for reference in object
+        .get("object_refs")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default()
+    {
+        if let Some(id) = reference.as_str()
+            && let Some(observable) = scos.get(id)
+        {
+            observables.push(observable.clone());
+        }
+    }
+
+    // Two spellings can name one artefact — an embedded copy and a reference to the same SCO — and
+    // that is one observation, not two.
+    observables.dedup_by_key(|observable| observable.id());
+
+    if observables.is_empty() {
+        return Err(Rejection::new(
+            "no_mappable_observable",
+            "`observed-data` names no observable Brolga canonicalises, so it would record an \
+             observation of nothing",
+            object,
+        ));
+    }
+
+    Ok(observables)
 }
 
 /// One attribute assertion, with the name and value each rejected by their own reason.
@@ -1059,4 +1314,28 @@ fn collect_nodes(objects: &[Value]) -> BTreeMap<String, Vec<NodeRef>> {
 /// that was written under a different key.
 fn entity_id_for(kind: EntityKind, name: &str) -> Id<Entity> {
     Id::derive(&[kind.as_str(), &name.to_lowercase()])
+}
+
+/// Map every top-level SCO in a bundle to the observable it canonicalises to.
+///
+/// Separate from [`collect_nodes`], which holds *identifiers* for relationship endpoints. A STIX
+/// 2.1 `observed-data` names its artefacts by reference and needs the observable itself, and
+/// reconstructing one from a derived identifier is not possible — nor should it be, since an
+/// identifier that could be inverted would not be a digest.
+fn collect_scos(objects: &[Value]) -> BTreeMap<String, Observable> {
+    let mut scos = BTreeMap::new();
+    for object in objects {
+        let Some(id) = object.get("id").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(kind) = object.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+        if is_observable_type(kind)
+            && let Ok(observable) = observable_of(object, kind)
+        {
+            scos.insert(id.to_owned(), observable);
+        }
+    }
+    scos
 }

@@ -78,9 +78,21 @@ mod tests {
                 .unwrap_or_else(|| panic!("{name} has no $id"));
 
             assert!(id.starts_with("urn:brolga:schema:"), "{name}: {id}");
+
+            // The *shape*, not a literal `1.0`. Pinning the version here made the test fail the
+            // first time a type took a legitimate minor bump — which is the case the versioning
+            // rule exists to allow, so a test that forbade it was asserting the wrong thing.
+            let version = id
+                .strip_prefix(&format!("urn:brolga:schema:{name}/"))
+                .unwrap_or_else(|| {
+                    panic!("{name}: $id must end in <name>/<major>.<minor>, found {id}")
+                });
+            let (major, minor) = version.split_once('.').unwrap_or_else(|| {
+                panic!("{name}: version must be <major>.<minor>, found {version}")
+            });
             assert!(
-                id.ends_with(&format!("{name}/1.0")),
-                "{name}: $id must end in <name>/<major>.<minor>, found {id}"
+                major.parse::<u16>().is_ok() && minor.parse::<u16>().is_ok(),
+                "{name}: version must be numeric, found {version}"
             );
         }
     }
@@ -106,13 +118,13 @@ mod tests {
         let entity = schema_for::<Entity>();
         assert_eq!(
             entity.get("$id").and_then(Value::as_str),
-            Some("urn:brolga:schema:brolga.entity/1.0"),
+            Some("urn:brolga:schema:brolga.entity/1.1"),
         );
         assert_eq!(
             entity
                 .get("x-brolga-schema-version")
                 .and_then(Value::as_str),
-            Some("brolga.entity/1.0"),
+            Some("brolga.entity/1.1"),
         );
     }
 

@@ -1,0 +1,3 @@
+<?xml version="1.0"?>
+<!DOCTYPE l [<!ENTITY a "aa">]>
+<ioc>&a;</ioc>

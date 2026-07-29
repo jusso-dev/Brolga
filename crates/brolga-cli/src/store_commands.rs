@@ -19,7 +19,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use brolga_ingest::formats::{delimited, misp, stix};
+use brolga_ingest::formats::{delimited, misp, sigma, stix, telemetry, xml, yara};
 use brolga_ingest::{
     Document, DocumentReport, IngestError, IngestMode, IngestReport, ParserRegistry, Pipeline,
 };
@@ -43,6 +43,11 @@ pub(crate) fn registry() -> ParserRegistry {
     registry.register(misp::MispParser::boxed());
     registry.register(delimited::DelimitedParser::boxed());
     registry.register(delimited::JsonLinesParser::boxed());
+    registry.register(sigma::SigmaParser::boxed());
+    registry.register(yara::YaraParser::boxed());
+    registry.register(telemetry::TelemetryParser::boxed());
+    registry.register(xml::OpenIocParser::boxed());
+    registry.register(xml::IodefParser::boxed());
     registry
 }
 

@@ -10,5 +10,9 @@
 
 pub mod delimited;
 pub mod misp;
+pub mod sigma;
 pub mod stix;
 pub mod stix_pattern;
+pub mod telemetry;
+pub mod xml;
+pub mod yara;

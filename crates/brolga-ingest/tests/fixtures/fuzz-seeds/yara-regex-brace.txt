@@ -1,0 +1,1 @@
+rule R { strings: $a = /a{2,3}/ condition: $a }
