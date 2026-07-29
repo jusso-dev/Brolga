@@ -37,7 +37,7 @@ use crate::subject::{self, SubjectRejected};
 /// The schema a consumer sees on the pack.
 ///
 /// Matches the identifier Kelpie's consumer contract was written against.
-pub const CONTEXT_PACK_SCHEMA: &str = "brolga.context_pack/1.0";
+pub const CONTEXT_PACK_SCHEMA: &str = "brolga.context_pack/1.1";
 
 /// How many records of each kind are gathered before the pack stops growing.
 ///
@@ -105,8 +105,9 @@ pub struct Budgets {
 // lives in `brolga-model` beside every other versioned schema, and this layer only builds one.
 pub use brolga_model::pack::{
     Budget, BudgetReport, ClaimSummary, ContextPack, Contradiction, DetailLevel, EntitySummary,
-    EvidenceRef, Exclusion, ExclusionReason, Finding, Gap, PackGraph, PackMetadata, PackSubject,
-    Pivot, PolicyContext, Recommendation, RelationshipSummary, SightingSummary,
+    EvidenceRef, Exclusion, ExclusionReason, ExpansionHandle, Finding, Gap, PackGraph,
+    PackMetadata, PackSubject, Pivot, PolicyContext, Recommendation, RelationshipSummary,
+    SightingSummary,
 };
 
 // -------------------------------------------------------------------------------------------------
@@ -289,6 +290,23 @@ pub async fn context<S: StoreRead>(
         ..PackGraph::default()
     };
 
+    // A handle per claim, so every compressed item is expandable back to its canonical record and
+    // its original bytes. Issued at every level, including the summary ones — the point of a
+    // summary is that it does not *carry* records, not that it hides where they are.
+    let handles: Vec<ExpansionHandle> = claims
+        .iter()
+        .filter_map(|claim| {
+            Some(ExpansionHandle::new(
+                claim.id.to_string(),
+                ShortText::new("claim").ok()?,
+                DetailLevel::L5,
+                graph_version,
+                brolga_model::Timestamp::from_offset_date_time(::time::OffsetDateTime::now_utc())
+                    .to_rfc3339(),
+            ))
+        })
+        .collect();
+
     let pack = ContextPack {
         schema_version: SchemaTag::new(),
         fingerprint: String::new(),
@@ -306,6 +324,7 @@ pub async fn context<S: StoreRead>(
         detail_level: served_level,
         disposition,
         graph,
+        handles,
         findings,
         recommendations: Vec::new(),
         gaps,
@@ -551,7 +570,7 @@ mod tests {
 
         assert_eq!(
             ContextPack::schema_identifier(),
-            "brolga.context_pack/1.0",
+            "brolga.context_pack/1.1",
             "the pack's schema id is what a deployed consumer contract was written against"
         );
     }
