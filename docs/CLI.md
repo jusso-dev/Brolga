@@ -277,6 +277,8 @@ brolga fetch taxii https://taxii.example.org \
     --collection 91a7b528-80eb-42ed-a74d-c6fbd5a26116
 
 BROLGA_MISP_KEY=... brolga fetch misp https://misp.example.org --name reef-misp
+
+BROLGA_OPENCTI_TOKEN=... brolga fetch opencti https://opencti.example.org
 ```
 
 Discovery is attempted at `/taxii2/` and then `/taxii/`, so give the **base URL** rather than
@@ -328,9 +330,27 @@ path-parameter `GET` form instead, so the transport keeps having no method that 
 cost: a filter set large enough to overflow a URL cannot be expressed this way. Brolga's filters are
 a page size, a page number, and a high-water mark, so it does not come close.
 
+### `brolga fetch opencti`
+
+Polls `stixCoreObjects` incrementally and hands each object's own `toStix` rendering to the STIX
+parser — the same parser, over the same shape, as every other STIX source. Re-deriving Brolga's
+records from OpenCTI's GraphQL fields would be a second mapping that can disagree with the first.
+
+An object OpenCTI cannot render as STIX is **counted, not skipped**, and appears in the run's
+quarantined total. A half-imported page that said nothing would look identical to a whole one.
+
+Every query is compiled into Brolga. There is no way to supply GraphQL on the command line or in
+configuration, and no compiled-in operation is a mutation — a test walks all of them to check. See
+[ADR 0006](adr/0006-a-closed-set-of-query-bodies.md) for why the transport gained a body-sending
+method at all, and what replaced the guarantee it removed.
+
+A redirect answering a query is refused rather than followed. Re-posting a body to a location a
+server chose is how a query aimed at a configured endpoint ends up delivered somewhere else.
+
 ### Credentials
 
-TAXII reads `BROLGA_TAXII_TOKEN`; MISP reads `BROLGA_MISP_KEY`. Never a flag. A credential on a command line is in the shell
+TAXII reads `BROLGA_TAXII_TOKEN`; MISP reads `BROLGA_MISP_KEY`; OpenCTI reads
+`BROLGA_OPENCTI_TOKEN`. Never a flag. A credential on a command line is in the shell
 history, in `ps` output, and in any process listing the machine keeps. The `Bearer ` prefix is
 added if it is not already there.
 

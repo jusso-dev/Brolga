@@ -270,7 +270,7 @@ Unsafe Rust is prohibited unless a separately reviewed and documented exception 
 - local versioned HTTP API with OpenAPI and JSON Schema
 - MCP stdio server exposing intent-level intelligence tools
 - versioned context-pack and exporter schemas
-- read-only OpenCTI connector (TAXII 2.0/2.1 and MISP have landed — see `brolga fetch`)
+- read-only TAXII 2.0/2.1, MISP, and OpenCTI connectors — see `brolga fetch`
 - declarative mappings, compression profiles, trust, decay, policy, retention, and environment configuration
 
 No web frontend is planned for initial release.
