@@ -210,6 +210,33 @@ impl SqliteStore {
             .map_err(|error| StorageError::query("reading the busy timeout", error))
     }
 
+    /// Read a stored document back as JSON, without decoding it into its typed form first.
+    ///
+    /// What is returned is what is on disk. Re-serialising a decoded value would hide a difference
+    /// between the two, and that difference is exactly the thing worth being able to notice.
+    fn document_json(
+        &self,
+        sql: &str,
+        id: &str,
+        kind: &'static str,
+    ) -> Result<Option<serde_json::Value>> {
+        let document: Option<String> = self
+            .connection
+            .query_row(sql, params![id], |row| row.get(0))
+            .optional()
+            .map_err(|error| StorageError::query("reading a record", error))?;
+
+        document
+            .map(|document| {
+                serde_json::from_str(&document).map_err(|error| StorageError::Corrupt {
+                    kind,
+                    id: id.to_owned(),
+                    reason: format!("stored document is not valid JSON: {error}"),
+                })
+            })
+            .transpose()
+    }
+
     /// Read a single non-negative count, for the aggregate queries that return one.
     fn scalar(&self, sql: &str) -> Result<u64> {
         let value: i64 = self
@@ -317,6 +344,9 @@ const GET_ENTITY: &str = "SELECT document FROM entities WHERE id = ?1";
 const GET_RELATIONSHIP: &str = "SELECT document FROM relationships WHERE id = ?1";
 const GET_CLAIM: &str = "SELECT document FROM claims WHERE id = ?1";
 const GET_SIGHTING: &str = "SELECT document FROM sightings WHERE id = ?1";
+
+const LIST_SOURCE_OBJECTS: &str = "\
+SELECT document FROM source_objects ORDER BY retrieved_at DESC, id ASC LIMIT ?1 OFFSET ?2";
 
 const LIST_ENTITIES: &str = "\
 SELECT document FROM entities
@@ -663,6 +693,37 @@ impl StoreRead for SqliteStore {
 
     fn quarantine_occurrences(&self) -> Result<u64> {
         self.scalar("SELECT COALESCE(SUM(occurrences), 0) FROM quarantine")
+    }
+
+    fn list_source_objects(&self, page: Page) -> Result<Vec<SourceObject>> {
+        self.fetch_many(
+            "source_object",
+            LIST_SOURCE_OBJECTS,
+            &[
+                &page.limit(),
+                &i64::try_from(page.offset()).unwrap_or(i64::MAX),
+            ],
+        )
+    }
+
+    fn get_entity_json(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        self.document_json(GET_ENTITY, id, "entity")
+    }
+
+    fn get_relationship_json(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        self.document_json(GET_RELATIONSHIP, id, "relationship")
+    }
+
+    fn get_claim_json(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        self.document_json(GET_CLAIM, id, "claim")
+    }
+
+    fn get_sighting_json(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        self.document_json(GET_SIGHTING, id, "sighting")
+    }
+
+    fn get_source_object_json(&self, id: &str) -> Result<Option<serde_json::Value>> {
+        self.document_json(GET_SOURCE_OBJECT, id, "source_object")
     }
 
     fn graph_version(&self) -> Result<u64> {

@@ -354,6 +354,53 @@ pub trait StoreRead {
     /// [`crate::StorageError::Query`] for a backend failure.
     fn quarantine_occurrences(&self) -> Result<u64>;
 
+    /// Every retained source object, newest first.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure.
+    fn list_source_objects(&self, page: Page) -> Result<Vec<SourceObject>>;
+
+    /// Fetch a stored entity as its serialised document.
+    ///
+    /// Returns the document as stored rather than a re-serialisation of a decoded value, so what an
+    /// operator sees is what is on disk — a difference between the two is exactly the thing worth
+    /// being able to notice.
+    ///
+    /// # Errors
+    ///
+    /// [`crate::StorageError::Query`] for a backend failure, [`crate::StorageError::Corrupt`] if
+    /// the stored document is not valid JSON.
+    fn get_entity_json(&self, id: &str) -> Result<Option<serde_json::Value>>;
+
+    /// As [`Self::get_entity_json`], for a relationship.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::get_entity_json`].
+    fn get_relationship_json(&self, id: &str) -> Result<Option<serde_json::Value>>;
+
+    /// As [`Self::get_entity_json`], for a claim.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::get_entity_json`].
+    fn get_claim_json(&self, id: &str) -> Result<Option<serde_json::Value>>;
+
+    /// As [`Self::get_entity_json`], for a sighting.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::get_entity_json`].
+    fn get_sighting_json(&self, id: &str) -> Result<Option<serde_json::Value>>;
+
+    /// As [`Self::get_entity_json`], for a source object.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::get_entity_json`].
+    fn get_source_object_json(&self, id: &str) -> Result<Option<serde_json::Value>>;
+
     /// The graph's material-change version.
     ///
     /// Increments when a graph record is inserted or changed, and not when an upsert is a no-op —

@@ -24,17 +24,40 @@ What works today:
 - Shared trust classification, resource limits, cancellation, and outbound network policy, backed by a [threat model](docs/THREAT-MODEL.md).
 - Cross-platform CI on Linux, macOS, and Windows, with licence, advisory, and supply-chain gates.
 
-What does not work yet: **ingestion, the intelligence graph, compression, context packs, the HTTP API, the MCP server, connectors, and plugins.** `brolga ingest` and `brolga context` exist as commands and exit `5`, naming the milestone that implements them, rather than pretending to succeed.
+What `v0.1.0` did not include: ingestion, the intelligence graph, compression, context packs, the HTTP API, the MCP server, connectors, and plugins. Ingestion arrived in `v0.2.0` — see below. The rest have not.
 
 **`v0.2.0 — Core ingestion` is complete.** STIX 2.1 and MITRE ATT&CK, MISP events and warning
 lists, and CSV/TSV/JSON/NDJSON/plain-text feeds all parse into canonical records, with original
 source bytes retained content-addressed, strict and permissive modes, and a quarantine that keeps
 what it could not accept.
 
-**`brolga ingest` still exits `5`.** Every parser above is library code; no CLI command drives one
-yet. The command surface is [#34](https://github.com/jusso-dev/Brolga/issues/34), in `v0.5.0`. Until
-then ingestion is reachable from Rust and not from a terminal, and this README will not pretend
-otherwise.
+**`brolga ingest` works.** Point it at a STIX 2.1 bundle, a MISP export, or a CSV/NDJSON/plain-text
+indicator list and the records land in a local SQLite database, with the original bytes retained
+content-addressed and anything unreadable kept in quarantine with a reason.
+
+```console
+$ brolga ingest bundle.json event.json indicators.txt --mode permissive
+permissive ingest: 39 offered, 37 accepted (37 new, 0 updated, 0 unchanged), 2 rejected
+(2 newly quarantined), 3 source object(s) retained, 0 already held
+
+$ brolga stats
+entities         5
+relationships    10
+claims           22
+sightings        0
+source_objects   3
+graph version    37
+retained         3 (1649 bytes stored)
+quarantined      2 distinct, 2 occurrence(s)
+```
+
+`brolga show <id>` returns a stored record with its full provenance chain, `brolga sources` lists
+retained originals, and `brolga quarantine --source <digest>` shows what was refused and why. Every
+command takes `--output json`, which puts exactly one object on stdout so it pipes into `jq`.
+
+**`brolga context` still exits `5`.** The compression engine is `v0.4.0`. There is no HTTP API, no
+MCP server, no connector, and nothing fetches a feed on a schedule — ingestion reads files you give
+it. This README will not pretend otherwise.
 
 Work continues as scoped, dependency-aware [GitHub issues](https://github.com/jusso-dev/Brolga/issues) across eight release milestones. Each defines outcome, scope, acceptance criteria, dependencies, non-goals, and security and provenance impact. See the [roadmap](docs/ROADMAP.md) before proposing implementation.
 
@@ -42,10 +65,23 @@ Work continues as scoped, dependency-aware [GitHub issues](https://github.com/ju
 
 ```bash
 cargo build --release
-./target/release/brolga init
-./target/release/brolga config validate
-./target/release/brolga doctor
+export PATH="$PWD/target/release:$PATH"
+
+brolga init            # write a starter brolga.yaml
+brolga doctor          # check this installation can do its job
+
+# Ingest whatever you have. Format is detected per file.
+brolga ingest my-bundle.json my-feed.csv --mode permissive
+
+brolga stats                                  # what landed
+brolga sources                                # the originals, retained by digest
+brolga quarantine --source sha256:<digest>    # what was refused, and why
+brolga show entity:<uuid>                     # one record, with its provenance chain
 ```
+
+`--mode strict` is the default and refuses the whole batch if anything cannot be read, so a partial
+import is never mistaken for a complete one. `--dry-run` parses and reports without writing.
+`--output json` puts one object on stdout for `jq`.
 
 `brolga config explain` shows every resolved setting and which layer supplied it. `brolga exit-codes` prints the exit-code registry from the build you are running. See [docs/CLI.md](docs/CLI.md).
 

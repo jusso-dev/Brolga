@@ -1,0 +1,9 @@
+# Blocklist export, generated 2024-05-01
+# One indicator per line
+
+evil.example
+192.0.2.10
+https://lure.example/Login
+d41d8cd98f00b204e9800998ecf8427e
+
+198.51.100.0/24

@@ -21,6 +21,7 @@ mod cli;
 mod commands;
 mod exit;
 mod output;
+mod store_commands;
 mod telemetry;
 
 use clap::Parser;
