@@ -11,3 +11,4 @@
 pub mod delimited;
 pub mod misp;
 pub mod stix;
+pub mod stix_pattern;

@@ -85,6 +85,30 @@
       "revoked": true
     },
     {
+      "type": "identity",
+      "spec_version": "2.1",
+      "id": "identity--1a2b3c4d-0000-4000-8000-00000000000a",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Coastal Water Authority",
+      "identity_class": "organization"
+    },
+    {
+      "type": "infrastructure",
+      "spec_version": "2.1",
+      "id": "infrastructure--1a2b3c4d-0000-4000-8000-00000000000b",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Bunyip staging servers",
+      "infrastructure_types": ["hosting-malware"]
+    },
+    {
+      "type": "course-of-action",
+      "spec_version": "2.1",
+      "id": "course-of-action--1a2b3c4d-0000-4000-8000-00000000000c",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Block outbound PowerShell",
+      "description": "A mitigation. No canonical entity kind means one, so this is quarantined."
+    },
+    {
       "type": "grouping",
       "spec_version": "2.1",
       "id": "grouping--1a2b3c4d-0000-4000-8000-000000000009",

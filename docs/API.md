@@ -141,12 +141,32 @@ a silently truncated pack reads as a complete one.
 `detail_level` is accepted but only `L1` is served. The pack reports the level **actually served**
 and notes the difference in `exclusions`, so a consumer is never told it received depth it did not.
 
-#### Known limitation
+#### Where observables come from
 
-Observables reach Brolga through MISP attributes. Brolga's STIX parser does not map `indicator`
-objects yet — it quarantines them rather than coercing them into the nearest canonical type — so a
-STIX bundle of indicators contributes nothing a context lookup can find. Tracked in
-[#95](https://github.com/jusso-dev/Brolga/issues/95).
+Observables reach Brolga through MISP attributes and through STIX `indicator` patterns. Both paths
+run the value through the same canonicalisers, so one address published by both feeds is one
+observable in the graph rather than two — a lookup finds everything held about it, not half.
+
+The STIX side maps `=` comparisons against `ipv4-addr:value`, `ipv6-addr:value`,
+`domain-name:value`, `url:value`, `email-addr:value`, or `file:hashes.'<algorithm>'`, joined by
+`OR` if there is more than one. Any other pattern — `AND`, `FOLLOWEDBY`, an operator other than
+`=`, an object path with no canonicaliser, several bracketed expressions, a `pattern_type` other
+than `stix`, or a `pattern_version` outside 2.x — is quarantined with a reason naming the
+construct, never partially extracted. Half a pattern asserts something broader than the publisher
+did, which is worse than an unparsed one; a quarantined indicator is at least visible in
+`brolga quarantine`.
+
+A disjunction fans out to a claim per alternative, because a published address list is how feeds
+spell one. That is a widening — the publisher said *one of* these matched — so every resulting
+claim carries the whole pattern text and a `stix.indicator.alternatives` count, and a consumer can
+tell a lone assertion from one alternative out of fifty without re-parsing anything. Ordinary
+single-observable indicators carry no count.
+
+`indicator_types` reaches the pack's `disposition` only where it states an assessment
+(`malicious-activity`, `benign`, `anomalous-activity`, `compromised`). A descriptive label such as
+`anonymization` or `attribution` is recorded as a claim and asserts no disposition, because
+presence in a feed is not evidence of maliciousness. `valid_from` and `valid_until` become the
+claim's validity window, and the indicator's `name` and `description` are kept as evidence.
 
 ### Paging
 

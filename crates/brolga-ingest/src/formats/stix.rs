@@ -8,12 +8,24 @@
 //! does not understand is **quarantined with a reason** rather than coerced into the nearest type.
 //!
 //! - **SDOs** — `threat-actor`, `malware`, `tool`, `campaign`, `intrusion-set`, `vulnerability`,
-//!   `attack-pattern`, `identity`, `infrastructure`, `course-of-action` — become entities.
+//!   `attack-pattern`, `identity`, `infrastructure` — become entities. `course-of-action` does
+//!   **not**: it is a mitigation, and there is no canonical entity kind that means one. It is
+//!   quarantined rather than filed under the nearest kind, which is the same rule every other
+//!   unmapped type gets.
 //! - **SCOs** — `ipv4-addr`, `ipv6-addr`, `domain-name`, `url`, `email-addr`, `file` — are
 //!   canonicalised through [`crate::canon`] and become claims about the observable, because the
 //!   canonical model addresses an observable by its value rather than storing it as a row of its
 //!   own. A source publishing an SCO is asserting it saw the artefact, and that assertion is the
 //!   thing worth keeping.
+//! - **`indicator`** — the object STIX actually carries observables in. Its `pattern` is read by
+//!   [`crate::formats::stix_pattern`], which maps `=` comparisons against supported object paths,
+//!   `OR`-joined if there is more than one, and **refuses everything else by name**. Observables go
+//!   through the same canonicalisers the MISP parser uses, so one address published by both feeds
+//!   derives one identifier rather than landing in the graph twice. `indicator_types` becomes a
+//!   [`Disposition`] only where it states an assessment; `valid_from` / `valid_until` become the
+//!   claim's validity window; `name` and `description` are kept as evidence. A disjunction fans out
+//!   to a claim per alternative **and** records how many there were, so the hedge the publisher
+//!   made survives the fan-out rather than being paid silently.
 //! - **SROs** — `relationship` — become relationships, with the STIX `relationship_type` mapped to
 //!   a typed [`RelationshipKind`]. An unmapped type becomes `RelatedTo` **and a note**, never a
 //!   silent guess at a stronger claim.
@@ -40,14 +52,16 @@
 use std::collections::BTreeMap;
 
 use brolga_model::{
-    Assertion, Claim, Entity, EntityKind, Id, LifecycleStatus, Marking, MarkingSet, NodeRef,
-    Observable, RecordOrigin, Relationship, RelationshipKind, ShortText, TlpLevel, UntrustedText,
+    Assertion, Claim, Disposition, Entity, EntityKind, Id, LifecycleStatus, Marking, MarkingSet,
+    NodeRef, Observable, RecordOrigin, Relationship, RelationshipKind, ShortText, TemporalState,
+    Timestamp, TlpLevel, UntrustedText,
 };
 use serde_json::Value;
 
 use crate::canon::{self, CanonError};
 use crate::detect::{Candidate, DetectionConfidence, FormatHint};
 use crate::error::ParseError;
+use crate::formats::stix_pattern;
 use crate::parser::{
     IntelligenceParser, ParseContext, ParseOutput, ParsedRecord, ParserId, RejectedRecord,
     candidate,
@@ -65,6 +79,13 @@ pub const STIX_MEDIA_TYPES: &[&str] = &["application/stix+json", "application/vn
 /// shape whether or not anybody meant it as one, and no legitimate bundle needs a single object to
 /// have thousands of outbound edges.
 pub const MAX_FAN_OUT: usize = 1024;
+
+/// Largest `indicator_types` array accepted from one indicator.
+///
+/// The vocabulary has seven members and a real indicator carries one or two. An array of thousands
+/// is a record-amplification shape — every entry becomes up to two claims — and is refused whole
+/// rather than truncated, because a truncated list silently drops assessments the publisher made.
+pub const MAX_INDICATOR_TYPES: usize = 16;
 
 /// A STIX 2.1 bundle reader.
 #[derive(Debug, Default, Clone, Copy)]
@@ -185,10 +206,20 @@ impl IntelligenceParser for StixParser {
                 .map_err(|error| ParseError::new(error.to_string()))?;
 
             match map_object(object, &origin, &markings, &nodes, &mut fan_out, &limits) {
-                Ok(Some(record)) => out.records.push(record),
-                Ok(None) => {}
+                Ok(records) => out.records.extend(records),
                 Err(rejection) => out.rejected.push(rejection.into_rejected(index)),
             }
+        }
+
+        // One object no longer means one record — an indicator produces a claim per assessment it
+        // states — so the produced count is bounded as well as the object count. Without this, the
+        // object limit would stop bounding what a bundle can make Brolga hold.
+        let produced = u64::try_from(out.records.len()).unwrap_or(u64::MAX);
+        if produced > limits.max_records {
+            return Err(ParseError::new(format!(
+                "produced {produced} records, over the {}-record limit",
+                limits.max_records
+            )));
         }
 
         Ok(out)
@@ -348,17 +379,18 @@ fn markings_for(object: &Value, definitions: &BTreeMap<String, Marking>) -> Mark
     set
 }
 
-/// Map one STIX object.
+/// Map one STIX object to the records it becomes.
 ///
-/// `Ok(None)` for objects that are consumed rather than mapped, such as marking definitions.
+/// An empty vector for objects that are consumed rather than mapped, such as marking definitions.
+/// More than one for an indicator, which states a pattern and may state several assessments of it.
 fn map_object(
     object: &Value,
     origin: &RecordOrigin,
     markings: &BTreeMap<String, Marking>,
-    nodes: &BTreeMap<String, NodeRef>,
+    nodes: &BTreeMap<String, Vec<NodeRef>>,
     fan_out: &mut BTreeMap<String, usize>,
     limits: &brolga_security::InputLimits,
-) -> Result<Option<ParsedRecord>, Rejection> {
+) -> Result<Vec<ParsedRecord>, Rejection> {
     let kind = object
         .get("type")
         .and_then(Value::as_str)
@@ -366,8 +398,9 @@ fn map_object(
 
     match kind {
         // Consumed by collect_markings; not a record in its own right.
-        "marking-definition" => Ok(None),
-        "relationship" => map_relationship(object, origin, markings, nodes, fan_out).map(Some),
+        "marking-definition" => Ok(Vec::new()),
+        "relationship" => map_relationship(object, origin, markings, nodes, fan_out),
+        "indicator" => map_indicator(object, origin, markings, limits),
         "bundle" => Err(Rejection::new(
             "nested_bundle",
             "a bundle nested inside a bundle is not valid STIX 2.1",
@@ -375,9 +408,9 @@ fn map_object(
         )),
         _ => {
             if let Some(entity_kind) = entity_kind_of(kind) {
-                map_entity(object, entity_kind, origin, markings, limits).map(Some)
+                map_entity(object, entity_kind, origin, markings, limits).map(|record| vec![record])
             } else if is_observable_type(kind) {
-                map_observable(object, kind, origin, markings).map(Some)
+                map_observable(object, kind, origin, markings).map(|record| vec![record])
             } else {
                 Err(Rejection::new(
                     "unsupported_object_type",
@@ -402,6 +435,8 @@ fn entity_kind_of(stix_type: &str) -> Option<EntityKind> {
         "intrusion-set" => EntityKind::IntrusionSet,
         "vulnerability" => EntityKind::Vulnerability,
         "attack-pattern" => EntityKind::AttackTechnique,
+        "identity" => EntityKind::Identity,
+        "infrastructure" => EntityKind::Infrastructure,
         _ => return None,
     })
 }
@@ -547,14 +582,267 @@ fn observable_of(object: &Value, stix_type: &str) -> Result<Observable, CanonErr
     Ok(canonical.into_value())
 }
 
-/// Map an SRO to a relationship.
+/// Map an `indicator` to claims about the observables its pattern names.
+///
+/// This is where STIX carries observables, so a bundle of indicators that produced nothing was a
+/// bundle a context lookup could not answer from — and an empty answer is indistinguishable from a
+/// genuinely unknown observable, which is the dangerous half of that failure.
+///
+/// Emitted per observable the pattern names:
+///
+/// - the pattern itself, as an attribute claim, so the assertion is retrievable as published —
+///   including its `OR` alternatives, which is what makes a fanned-out claim inspectable;
+/// - `stix.indicator.alternatives`, but only when the pattern was a disjunction, so a consumer can
+///   tell a lone assertion from one alternative out of fifty without re-parsing anything;
+/// - the indicator's `name` and `description` where it has them, because a publisher's own words
+///   about an indicator are evidence an analyst reads;
+/// - each `indicator_types` label, as an attribute claim, so nothing the publisher said is lost;
+/// - a [`Disposition`] claim for each label that actually *states an assessment* — presence in a
+///   feed is not evidence of maliciousness, so a label like `anonymization` records what it says
+///   and asserts no disposition at all.
+///
+/// A pattern this parser cannot represent whole is quarantined naming the construct. Extracting
+/// part of it would assert something broader than the publisher did.
+fn map_indicator(
+    object: &Value,
+    origin: &RecordOrigin,
+    markings: &BTreeMap<String, Marking>,
+    limits: &brolga_security::InputLimits,
+) -> Result<Vec<ParsedRecord>, Rejection> {
+    let pattern = object
+        .get("pattern")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            Rejection::new(
+                "missing_pattern",
+                "indicator has no `pattern`, so it names no observable",
+                object,
+            )
+        })?;
+
+    // A Snort or YARA rule in an `indicator` is a detection Brolga has no canonical form for. Its
+    // syntax also overlaps STIX patterning enough that reading it as one would silently produce
+    // whatever the first `=` in the rule happened to sit beside.
+    if let Some(language) = object.get("pattern_type").and_then(Value::as_str)
+        && !language.eq_ignore_ascii_case(stix_pattern::STIX_PATTERN_TYPE)
+    {
+        return Err(Rejection::new(
+            "unsupported_pattern_type",
+            format!(
+                "the pattern is written in `{language}` rather than STIX patterning; it is \
+                 quarantined rather than read under a grammar it was not written in"
+            ),
+            object,
+        ));
+    }
+
+    // `pattern_version` is the version of the *patterning language*, not of the object. A future
+    // major version may give the same characters a different meaning, and reading it under the 2.x
+    // grammar would produce a confident answer to a question that was not asked.
+    if let Some(version) = object.get("pattern_version").and_then(Value::as_str)
+        && !version.trim().starts_with('2')
+    {
+        return Err(Rejection::new(
+            "unsupported_pattern_version",
+            format!(
+                "the pattern declares patterning version `{version}`; Brolga reads the 2.x \
+                 grammar, and reading other versions under it would answer confidently about a \
+                 syntax whose meaning it does not know"
+            ),
+            object,
+        ));
+    }
+
+    let observables = stix_pattern::observables_of(pattern).map_err(|error| {
+        Rejection::new(
+            "unrepresentable_pattern",
+            format!(
+                "the indicator's pattern cannot be represented: {error}. The indicator is \
+                 quarantined whole rather than partially extracted, because a half-parsed pattern \
+                 silently widens what it asserted"
+            ),
+            object,
+        )
+    })?;
+
+    let marking_set = markings_for(object, markings);
+    let temporal = temporal_of(object)?;
+    let revoked = object.get("revoked").and_then(Value::as_bool) == Some(true);
+    let field_limit = usize::try_from(limits.max_field_bytes).unwrap_or(usize::MAX);
+
+    // Built once, applied to every observable the pattern named. One list means every alternative
+    // of a disjunction carries an identical set of assertions, which is the honest reading: the
+    // publisher stated them about the disjunction, not about a chosen member of it.
+    let mut assertions = vec![attribute(
+        object,
+        "stix.indicator.pattern",
+        pattern,
+        field_limit,
+    )?];
+
+    // Only for a disjunction. Writing `1` on every ordinary indicator would be noise on the
+    // overwhelming majority of claims to carry information about a rare minority.
+    if observables.len() > 1 {
+        assertions.push(attribute(
+            object,
+            "stix.indicator.alternatives",
+            &observables.len().to_string(),
+            field_limit,
+        )?);
+    }
+
+    for (field, name) in [
+        ("name", "stix.indicator.name"),
+        ("description", "stix.indicator.description"),
+    ] {
+        if let Some(text) = object.get(field).and_then(Value::as_str) {
+            assertions.push(attribute(object, name, text, field_limit)?);
+        }
+    }
+
+    let indicator_types = object
+        .get("indicator_types")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or_default();
+    if indicator_types.len() > MAX_INDICATOR_TYPES {
+        return Err(Rejection::new(
+            "indicator_types_exceeded",
+            format!(
+                "the indicator states {} types, over the {MAX_INDICATOR_TYPES} limit; it is \
+                 refused rather than truncated, because a truncated list drops assessments the \
+                 publisher made",
+                indicator_types.len()
+            ),
+            object,
+        ));
+    }
+
+    for label in indicator_types {
+        let Some(label) = label.as_str() else {
+            return Err(Rejection::new(
+                "non_string_indicator_type",
+                "`indicator_types` holds a value that is not a string; the indicator is refused \
+                 rather than read past, because skipping it would drop an assessment silently",
+                object,
+            ));
+        };
+
+        assertions.push(attribute(
+            object,
+            "stix.indicator_type",
+            label,
+            field_limit,
+        )?);
+        if let Some(disposition) = disposition_of(label) {
+            assertions.push(Assertion::Disposition(disposition));
+        }
+    }
+
+    let mut records = Vec::with_capacity(observables.len().saturating_mul(assertions.len()));
+    for observable in &observables {
+        let subject = NodeRef::Observable(observable.id());
+        for assertion in &assertions {
+            let mut claim = Claim::new(subject, assertion.clone(), origin.clone());
+            claim.markings = marking_set.clone();
+            claim.temporal = temporal;
+            if revoked {
+                claim.status = LifecycleStatus::Revoked;
+            }
+            records.push(ParsedRecord::Claim(Box::new(claim)));
+        }
+    }
+
+    Ok(records)
+}
+
+/// One attribute assertion, with the name and value each rejected by their own reason.
+fn attribute(
+    object: &Value,
+    name: &str,
+    value: &str,
+    field_limit: usize,
+) -> Result<Assertion, Rejection> {
+    Ok(Assertion::Attribute {
+        name: ShortText::new(name).map_err(|error| {
+            Rejection::new("unusable_attribute_name", error.to_string(), object)
+        })?,
+        value: UntrustedText::new(bounded(value, field_limit.min(UntrustedText::MAX_BYTES)))
+            .map_err(|error| {
+                Rejection::new("unusable_attribute_value", error.to_string(), object)
+            })?,
+    })
+}
+
+/// Which [`Disposition`] an `indicator-type-ov` label asserts, if it asserts one at all.
+///
+/// The vocabulary mixes assessments with descriptions. `malicious-activity` and `benign` are
+/// findings about the subject; `anonymization` says the address is a proxy or Tor exit and
+/// `attribution` says it identifies an actor — neither is a statement about maliciousness, and
+/// turning them into one would let a feed's taxonomy silently decide detection. Those labels are
+/// still recorded as attribute claims by the caller, so nothing is lost by not asserting for them.
+fn disposition_of(indicator_type: &str) -> Option<Disposition> {
+    match indicator_type.trim().to_ascii_lowercase().as_str() {
+        "malicious-activity" => Some(Disposition::Malicious),
+        "benign" => Some(Disposition::Benign),
+        "anomalous-activity" | "compromised" => Some(Disposition::Suspicious),
+        _ => None,
+    }
+}
+
+/// The validity window an object states.
+///
+/// `valid_from` and `valid_until` are the publisher's assertion about *when their claim applies*,
+/// which is not the same as when Brolga saw it, so they land on the validity half of
+/// [`TemporalState`] rather than the observation half. An impossible window is a rejection rather
+/// than a silently dropped field: a publisher who wrote `valid_until` before `valid_from` did not
+/// mean "no window".
+fn temporal_of(object: &Value) -> Result<TemporalState, Rejection> {
+    let mut temporal = TemporalState::unknown();
+    temporal.valid_from = timestamp_field(object, "valid_from")?;
+    temporal.valid_until = timestamp_field(object, "valid_until")?;
+    temporal.validated().map_err(|error| {
+        Rejection::new(
+            "impossible_validity_window",
+            format!("the indicator's validity window is impossible: {error}"),
+            object,
+        )
+    })
+}
+
+/// One RFC 3339 field, rejected by name rather than silently ignored when it is unreadable.
+fn timestamp_field(object: &Value, field: &'static str) -> Result<Option<Timestamp>, Rejection> {
+    let Some(raw) = object.get(field) else {
+        return Ok(None);
+    };
+    let Some(text) = raw.as_str() else {
+        return Err(Rejection::new(
+            "unusable_timestamp",
+            format!("`{field}` is present but is not a string"),
+            object,
+        ));
+    };
+    Timestamp::parse_rfc3339(text).map(Some).map_err(|error| {
+        Rejection::new(
+            "unusable_timestamp",
+            format!("`{field}` is not an RFC 3339 timestamp: {error}"),
+            object,
+        )
+    })
+}
+
+/// Map an SRO to the relationships it becomes.
+///
+/// Usually one. An endpoint that is a disjunctive indicator resolves to every observable its
+/// pattern named, and the edge is written to each — matching how the claims fan out, so an
+/// `indicates` edge is not silently attached to whichever alternative happened to be first.
 fn map_relationship(
     object: &Value,
     origin: &RecordOrigin,
     markings: &BTreeMap<String, Marking>,
-    nodes: &BTreeMap<String, NodeRef>,
+    nodes: &BTreeMap<String, Vec<NodeRef>>,
     fan_out: &mut BTreeMap<String, usize>,
-) -> Result<ParsedRecord, Rejection> {
+) -> Result<Vec<ParsedRecord>, Rejection> {
     let source_ref = object
         .get("source_ref")
         .and_then(Value::as_str)
@@ -576,8 +864,42 @@ fn map_relationship(
             )
         })?;
 
+    let stix_kind = object
+        .get("relationship_type")
+        .and_then(Value::as_str)
+        .unwrap_or("related-to");
+    let (kind, exact) = relationship_kind_of(stix_kind);
+
+    // Resolved through the bundle's own objects, never derived from the STIX identifier. An edge
+    // whose endpoint is not in the bundle is rejected rather than written: a relationship to a
+    // record that does not exist is invisible in traversal, which is worse than a missing edge.
+    let sources = nodes.get(source_ref).ok_or_else(|| {
+        Rejection::new(
+            "unresolved_source_ref",
+            format!(
+                "`{source_ref}` is not an object in this bundle, so the edge would point at a \
+                 record that was never written"
+            ),
+            object,
+        )
+    })?;
+    let targets = nodes.get(target_ref).ok_or_else(|| {
+        Rejection::new(
+            "unresolved_target_ref",
+            format!(
+                "`{target_ref}` is not an object in this bundle, so the edge would point at a \
+                 record that was never written"
+            ),
+            object,
+        )
+    })?;
+
+    // Counted against the edges actually produced, not against the number of SROs. A disjunctive
+    // endpoint multiplies the edges written, and a bound that ignored that would stop bounding
+    // exactly the case that can grow quadratically.
+    let produced = sources.len().saturating_mul(targets.len());
     let count = fan_out.entry(source_ref.to_owned()).or_insert(0);
-    *count = count.saturating_add(1);
+    *count = count.saturating_add(produced);
     if *count > MAX_FAN_OUT {
         return Err(Rejection::new(
             "fan_out_exceeded",
@@ -589,53 +911,34 @@ fn map_relationship(
         ));
     }
 
-    let stix_kind = object
-        .get("relationship_type")
-        .and_then(Value::as_str)
-        .unwrap_or("related-to");
-    let (kind, exact) = relationship_kind_of(stix_kind);
+    let markings = markings_for(object, markings);
+    let note = (!exact)
+        .then(|| {
+            // An unmapped relationship type becomes the weakest kind *and says so*. Guessing a
+            // stronger one would invent a claim the source did not make.
+            UntrustedText::new(format!(
+                "STIX relationship_type `{stix_kind}` has no typed equivalent and was mapped to \
+                 related-to"
+            ))
+            .ok()
+        })
+        .flatten();
+    let revoked = object.get("revoked").and_then(Value::as_bool) == Some(true);
 
-    // Resolved through the bundle's own objects, never derived from the STIX identifier. An edge
-    // whose endpoint is not in the bundle is rejected rather than written: a relationship to a
-    // record that does not exist is invisible in traversal, which is worse than a missing edge.
-    let source = *nodes.get(source_ref).ok_or_else(|| {
-        Rejection::new(
-            "unresolved_source_ref",
-            format!(
-                "`{source_ref}` is not an object in this bundle, so the edge would point at a \
-                 record that was never written"
-            ),
-            object,
-        )
-    })?;
-    let target = *nodes.get(target_ref).ok_or_else(|| {
-        Rejection::new(
-            "unresolved_target_ref",
-            format!(
-                "`{target_ref}` is not an object in this bundle, so the edge would point at a \
-                 record that was never written"
-            ),
-            object,
-        )
-    })?;
-
-    let mut relationship = Relationship::new(kind, source, target, origin.clone());
-    relationship.markings = markings_for(object, markings);
-
-    if !exact {
-        // An unmapped relationship type becomes the weakest kind *and says so*. Guessing a stronger
-        // one would invent a claim the source did not make.
-        if let Ok(text) = UntrustedText::new(format!(
-            "STIX relationship_type `{stix_kind}` has no typed equivalent and was mapped to related-to"
-        )) {
-            relationship.description = Some(text);
+    let mut records = Vec::with_capacity(produced);
+    for source in sources {
+        for target in targets {
+            let mut relationship = Relationship::new(kind, *source, *target, origin.clone());
+            relationship.markings = markings.clone();
+            relationship.description = note.clone();
+            if revoked {
+                relationship.status = LifecycleStatus::Revoked;
+            }
+            records.push(ParsedRecord::Relationship(Box::new(relationship)));
         }
     }
-    if object.get("revoked").and_then(Value::as_bool) == Some(true) {
-        relationship.status = LifecycleStatus::Revoked;
-    }
 
-    Ok(ParsedRecord::Relationship(Box::new(relationship)))
+    Ok(records)
 }
 
 /// Map a STIX relationship type, reporting whether the mapping was exact.
@@ -698,13 +1001,17 @@ pub fn attack_id_of(object: &Value) -> Option<String> {
     })
 }
 
-/// Map every STIX identifier in a bundle to the canonical node it becomes.
+/// Map every STIX identifier in a bundle to the canonical nodes it becomes.
 ///
 /// Built in its own pass so a relationship can appear before the objects it joins — which it
 /// routinely does — and so that an endpoint is resolved to the *canonical* identity rather than
 /// derived from the STIX one. Objects this parser does not map are absent from the map, so an edge
 /// touching one is rejected with a reason instead of dangling.
-fn collect_nodes(objects: &[Value]) -> BTreeMap<String, NodeRef> {
+///
+/// A list rather than a single node, because a disjunctive indicator becomes an observable per
+/// alternative. An edge naming it is written to each, which is the same fan-out its claims get —
+/// resolving to just one would attach the edge to whichever alternative happened to parse first.
+fn collect_nodes(objects: &[Value]) -> BTreeMap<String, Vec<NodeRef>> {
     let mut nodes = BTreeMap::new();
     for object in objects {
         let Some(id) = object.get("id").and_then(Value::as_str) else {
@@ -718,13 +1025,28 @@ fn collect_nodes(objects: &[Value]) -> BTreeMap<String, NodeRef> {
             if let Some(name) = object.get("name").and_then(Value::as_str) {
                 nodes.insert(
                     id.to_owned(),
-                    NodeRef::Entity(entity_id_for(entity_kind, name)),
+                    vec![NodeRef::Entity(entity_id_for(entity_kind, name))],
                 );
             }
         } else if is_observable_type(kind)
             && let Ok(observable) = observable_of(object, kind)
         {
-            nodes.insert(id.to_owned(), NodeRef::Observable(observable.id()));
+            nodes.insert(id.to_owned(), vec![NodeRef::Observable(observable.id())]);
+        } else if kind == "indicator"
+            && let Some(pattern) = object.get("pattern").and_then(Value::as_str)
+            && let Ok(observables) = stix_pattern::observables_of(pattern)
+        {
+            // An `indicates` edge names the indicator, not the observable. Resolving it here is
+            // what lets the edge land on the observables the pattern is about — the only nodes the
+            // indicator becomes. An indicator whose pattern is quarantined is absent from the map,
+            // so an edge touching it is rejected with a reason rather than left dangling.
+            nodes.insert(
+                id.to_owned(),
+                observables
+                    .iter()
+                    .map(|observable| NodeRef::Observable(observable.id()))
+                    .collect(),
+            );
         }
     }
     nodes

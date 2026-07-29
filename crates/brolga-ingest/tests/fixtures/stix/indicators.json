@@ -1,0 +1,153 @@
+{
+  "type": "bundle",
+  "id": "bundle--7c9d1f60-1f7c-4c1e-9a2f-3b4c5d6e7f80",
+  "objects": [
+    {
+      "type": "marking-definition",
+      "spec_version": "2.1",
+      "id": "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9",
+      "created": "2017-01-20T00:00:00.000Z",
+      "definition_type": "tlp",
+      "name": "TLP:AMBER",
+      "definition": { "tlp": "amber" }
+    },
+    {
+      "type": "malware",
+      "spec_version": "2.1",
+      "id": "malware--2b3c4d5e-0000-4000-8000-000000000001",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Dropbear",
+      "is_family": true
+    },
+
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000010",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "C2 address",
+      "pattern_type": "stix",
+      "pattern": "[ipv4-addr:value = '203.0.113.42']",
+      "indicator_types": ["malicious-activity"],
+      "valid_from": "2024-01-01T00:00:00.000Z",
+      "valid_until": "2024-12-31T23:59:59.000Z",
+      "object_marking_refs": [
+        "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"
+      ]
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000011",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "stix",
+      "pattern": "[domain-name:value = 'EXAMPLE.COM.']",
+      "indicator_types": ["anonymization"]
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000012",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern": "[file:hashes.'SHA-256' = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA']",
+      "indicator_types": ["benign"]
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000013",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "stix",
+      "pattern": "[url:value = 'https://example.com/payload']",
+      "revoked": true
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000014",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "stix",
+      "pattern": "[email-addr:value = 'sender@example.com']",
+      "indicator_types": ["compromised", "attribution"]
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000015",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "stix",
+      "pattern": "[ipv6-addr:value = '2001:0DB8::0001']"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000016",
+      "created": "2024-01-01T00:00:00.000Z",
+      "description": "Two addresses seen serving one loader.",
+      "pattern_type": "stix",
+      "pattern": "[ipv4-addr:value = '198.51.100.20' OR ipv4-addr:value = '198.51.100.21']",
+      "indicator_types": ["malicious-activity"]
+    },
+
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000020",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "stix",
+      "pattern": "[ipv4-addr:value = '198.51.100.7' AND network-traffic:dst_port = 4444]"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000021",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "stix",
+      "pattern": "[ipv4-addr:value = '198.51.100.8'] FOLLOWEDBY [ipv4-addr:value = '198.51.100.9']"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000022",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "stix",
+      "pattern": "[windows-registry-key:key = 'HKEY_LOCAL_MACHINE\\\\Software\\\\Evil']"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000023",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "snort",
+      "pattern": "alert tcp any any -> any 4444 (msg:\"evil\"; sid:1;)"
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--2b3c4d5e-0000-4000-8000-000000000024",
+      "created": "2024-01-01T00:00:00.000Z",
+      "pattern_type": "stix",
+      "pattern_version": "3.0",
+      "pattern": "[ipv4-addr:value = '198.51.100.30']"
+    },
+
+    {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--2b3c4d5e-0000-4000-8000-000000000030",
+      "created": "2024-01-01T00:00:00.000Z",
+      "relationship_type": "indicates",
+      "source_ref": "indicator--2b3c4d5e-0000-4000-8000-000000000010",
+      "target_ref": "malware--2b3c4d5e-0000-4000-8000-000000000001"
+    },
+    {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--2b3c4d5e-0000-4000-8000-000000000031",
+      "created": "2024-01-01T00:00:00.000Z",
+      "relationship_type": "indicates",
+      "source_ref": "indicator--2b3c4d5e-0000-4000-8000-000000000020",
+      "target_ref": "malware--2b3c4d5e-0000-4000-8000-000000000001"
+    }
+  ]
+}
