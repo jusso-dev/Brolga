@@ -417,6 +417,15 @@ pub async fn not_found() -> Response {
     .into_response()
 }
 
+/// `GET /api/v1/openapi.json`.
+///
+/// Served rather than shipped as a file, so a consumer generating a client is generating against
+/// the build it is actually talking to. A checked-in document is a document that can be stale, and
+/// the failure mode is a client that compiles and then breaks on a field.
+pub async fn openapi() -> Json<serde_json::Value> {
+    Json(crate::openapi::document())
+}
+
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::expect_used)]
