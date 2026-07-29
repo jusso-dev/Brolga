@@ -180,8 +180,46 @@ contents under the right key.
 
 #### Detail levels
 
-`detail_level` is accepted but only `L1` is served. The pack reports the level **actually served**
-and notes the difference in `exclusions`, so a consumer is never told it received depth it did not.
+Six levels, and the contract is a contract rather than a hint.
+
+| Level | Carries | Reached by |
+| --- | --- | --- |
+| `L0` | The disposition and its evidence references | a pack request |
+| `L1` | Adds findings | a pack request |
+| `L2` | Adds entities and relationships | a pack request |
+| `L3` | Adds contradictions, clusters, pivots | a pack request |
+| `L4` | Complete canonical records | **expanding a handle** |
+| `L5` | The exact retained source bytes | **expanding a handle** |
+
+`L0`–`L2` never carry raw canonical records or source objects, whatever budget remains. A consumer
+asking for a summary has decided it does not want to parse records, and a level that *sometimes*
+returned them would make every consumer defensive about a shape it asked not to receive. A pack that
+violates this fails validation rather than being served.
+
+`L4` and `L5` cannot be served as a pack at all. Serving them would make one authorisation decision
+cover an unbounded amount of original material — every byte behind every claim. An expansion is one
+decision about one object, made against the policy in force at that moment.
+
+The pack reports the level **actually served** and notes any difference in `exclusions`, so a
+consumer is never told it received depth it did not.
+
+#### `handles`
+
+Every claim in a pack carries an `ExpansionHandle` — including at summary levels, because the point
+of a summary is that it does not *carry* records, not that it hides where they are.
+
+A handle holds a target, a kind, a `max_level`, the `graph_version` the pack was built against, and
+an issue time. It carries **no content and no permission**. `max_level` is advisory to the client so
+it can avoid a request it knows will be refused; it is not a grant, and the server re-checks
+authorisation on every expansion regardless.
+
+That matters because packs are stored. A pack from last month sitting in a case file must not be a
+standing grant to material the caller's authorisation no longer covers.
+
+`graph_version` lets a consumer tell whether an expansion is answering about the same graph state
+the pack saw. An expansion against a moved graph is legitimate — it is the current truth about the
+same object — but somebody diffing two expansions needs to know whether they are comparing content
+or comparing time.
 
 #### Where observables come from
 
