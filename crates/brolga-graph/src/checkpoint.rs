@@ -187,7 +187,7 @@ impl fmt::Display for RecordClass {
 ///
 /// Ordered by class and then identifier, which is what gives a delta a stable order without any
 /// sorting step that could be forgotten.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct RecordKey {
     /// What kind of record.
     pub class: RecordClass,
@@ -456,7 +456,7 @@ impl fmt::Display for ConfidenceBand {
 /// different names. The **excerpt** is what a delta quotes, bounded and stripped of control
 /// characters, so a hostile alias cannot carry an escape sequence into an operator's terminal and a
 /// checkpoint over a large neighbourhood does not hold a copy of every narrative field in memory.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FacetState {
     /// A digest of the complete value. What comparison uses.
     pub digest: ContentHash,
@@ -476,7 +476,7 @@ impl FacetState {
 }
 
 /// A record's material state, as one digest and the facets it was composed from.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct RecordFingerprint {
     /// What kind of record this describes.
@@ -643,7 +643,7 @@ impl fmt::Display for SuccessionKind {
 /// Supplied by the caller — typically from [`crate::resolve`]'s recorded operations — rather than
 /// inferred. Inferring a merge from "one record vanished and another gained its aliases" would
 /// invent a lineage nobody asserted, and a merge is close to irreversible in practice.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Succession {
     /// Whether it merged into one record or split into several.
     pub kind: SuccessionKind,
@@ -686,7 +686,7 @@ impl Succession {
 /// Carried because the issue asks for source sync state, and excluded from the fingerprint because
 /// a cursor advancing is the definition of a change nobody should be shown. See
 /// [`EXCLUDED_FROM_MATERIALITY`].
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct SourceSyncState {
     /// The connector's opaque position, where it has one.
     pub cursor: Option<String>,
@@ -767,7 +767,7 @@ impl CheckpointRequest {
 }
 
 /// A reproducible description of what the graph said, over one traversal's worth of it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Checkpoint {
     /// A digest of the traversal this was taken with.
@@ -784,8 +784,10 @@ pub struct Checkpoint {
     /// When the capture was taken, as supplied by the caller.
     pub captured_at: Timestamp,
     /// Every record covered, in key order.
+    #[serde(with = "keyed_pairs")]
     pub records: BTreeMap<RecordKey, RecordFingerprint>,
     /// What records that left the graph became.
+    #[serde(with = "keyed_pairs")]
     pub successions: BTreeMap<RecordKey, Succession>,
     /// Configuration, plugin, and algorithm versions in force.
     pub versions: BTreeMap<String, u32>,
@@ -808,6 +810,14 @@ pub struct Checkpoint {
     /// report a whole class of node as removed and then as added.
     pub unrecognised_nodes: usize,
     /// Which algorithm produced this.
+    /// Not carried through serialisation, and reconstructed from this build's constant on read.
+    ///
+    /// A `&'static str` cannot be deserialised from a transient document, and the alternative —
+    /// making it an owned `String` — would buy nothing: the identifier is a compile-time constant
+    /// of this crate, so a checkpoint decoded by this build was necessarily produced by this
+    /// algorithm. The check that does real work is [`Self::algorithm_version`], which *is* carried
+    /// and which [`compare`] refuses to cross.
+    #[serde(skip, default = "default_algorithm")]
     pub algorithm: &'static str,
     /// That algorithm's version.
     pub algorithm_version: u32,
@@ -2110,5 +2120,51 @@ mod tests {
         .map(DeltaTruncation::as_str)
         .collect();
         assert_eq!(labels.len(), 3);
+    }
+}
+
+/// This build's checkpoint algorithm, for a decoded checkpoint whose identifier was not carried.
+///
+/// See the note on [`Checkpoint::algorithm`]: the identifier is a constant, so reconstructing it is
+/// not an assumption. The version is carried and compared.
+fn default_algorithm() -> &'static str {
+    CHECKPOINT_ALGORITHM
+}
+
+/// Serialise a map whose key is a struct as a sequence of pairs.
+///
+/// A JSON object's keys must be strings, and [`RecordKey`] is a class and an identifier rather than
+/// one. Flattening it to `"entity:abc"` would work until an identifier contained the separator, at
+/// which point the key would silently parse back as something else — so the pair is kept as a pair
+/// and the ordering is restored by the `BTreeMap` on the way in.
+mod keyed_pairs {
+    use std::collections::BTreeMap;
+
+    use serde::de::Deserializer;
+    use serde::ser::Serializer;
+    use serde::{Deserialize, Serialize};
+
+    /// Write the map as a list of `[key, value]` pairs, in the map's own order.
+    pub(super) fn serialize<K, V, S>(map: &BTreeMap<K, V>, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        K: Serialize + Ord,
+        V: Serialize,
+        S: Serializer,
+    {
+        let pairs: Vec<(&K, &V)> = map.iter().collect();
+        pairs.serialize(serializer)
+    }
+
+    /// Read a list of pairs back. The `BTreeMap` restores the ordering, so a document written with
+    /// its pairs shuffled still decodes to the same map — which is what keeps a fingerprint stable
+    /// across a round trip.
+    pub(super) fn deserialize<'de, K, V, D>(deserializer: D) -> Result<BTreeMap<K, V>, D::Error>
+    where
+        K: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        let pairs: Vec<(K, V)> = Vec::deserialize(deserializer)?;
+        Ok(pairs.into_iter().collect())
     }
 }

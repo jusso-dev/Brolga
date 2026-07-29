@@ -93,6 +93,11 @@ pub const MIGRATIONS: &[Migration] = &[
         name: "decision_attribution",
         sql: DECISION_ATTRIBUTION,
     },
+    Migration {
+        id: 7,
+        name: "graph_checkpoints",
+        sql: GRAPH_CHECKPOINTS,
+    },
 ];
 
 /// The highest migration identifier this build carries.
@@ -332,6 +337,35 @@ ALTER TABLE graph_decisions ADD COLUMN policy_context TEXT;
 CREATE INDEX graph_decisions_actor ON graph_decisions (actor);
 ";
 
+/// Named baselines a delta can be taken against.
+///
+/// A checkpoint held only in memory answers "what changed since I started this process", which is
+/// not the question anybody asks. The question is "what changed since last week", and answering it
+/// means the baseline outlives the run that took it.
+///
+/// The checkpoint travels as a JSON document rather than a shredded set of columns, for the same
+/// reason canonical records do: it is read back whole, its shape is versioned by the algorithm that
+/// produced it, and a column per facet would have to change every time a facet is added.
+///
+/// `shape` and `algorithm_version` are columns as well as being inside the document, because
+/// comparing two checkpoints taken with different traversals or different algorithm versions is a
+/// refusal rather than a diff — and refusing needs to be possible without decoding both.
+const GRAPH_CHECKPOINTS: &str = "\
+CREATE TABLE graph_checkpoints (
+    name              TEXT    NOT NULL PRIMARY KEY,
+    shape             TEXT    NOT NULL,
+    graph_version     INTEGER NOT NULL,
+    algorithm         TEXT    NOT NULL,
+    algorithm_version INTEGER NOT NULL,
+    captured_at       TEXT    NOT NULL,
+    truncated         INTEGER NOT NULL,
+    document          TEXT    NOT NULL
+) STRICT;
+
+CREATE INDEX graph_checkpoints_shape      ON graph_checkpoints (shape);
+CREATE INDEX graph_checkpoints_captured   ON graph_checkpoints (captured_at);
+";
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -451,6 +485,10 @@ mod tests {
             (
                 6_u32,
                 "sha256:67c0313d32dc6c5ed98275a965324cfbaafdca1fc9fcdefd0fc338f1f5787e46",
+            ),
+            (
+                7_u32,
+                "sha256:b1f9281b40be2b6c4d4a46285e3941781d146c39546ef02c8dce03784ef2f210",
             ),
         ];
         for (id, expected) in pinned {
