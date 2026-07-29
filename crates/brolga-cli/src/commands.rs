@@ -74,6 +74,7 @@ pub(crate) fn run<Out: Write, Err: Write>(
                 crate::graph_commands::checkpoint_remove(args, streams)
             }
         },
+        Command::Serve(args) => crate::serve_command::serve(args, streams),
         Command::Completion(args) => completion(args, streams),
         Command::Doctor => doctor(global, correlation, streams),
         Command::Config(sub) => config(sub, global, streams),

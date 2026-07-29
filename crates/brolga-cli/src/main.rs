@@ -22,6 +22,7 @@ mod commands;
 mod exit;
 mod graph_commands;
 mod output;
+mod serve_command;
 mod store_commands;
 mod telemetry;
 
