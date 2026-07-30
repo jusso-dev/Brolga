@@ -211,9 +211,48 @@ pub(crate) enum Command {
     #[command(subcommand)]
     Plugin(PluginCommand),
 
+    /// Language-model proposals (disabled unless built with `--features llm`).
+    #[command(subcommand)]
+    Llm(LlmCommand),
+
     /// List the export formats this build ships.
     #[command(subcommand)]
     Export(ExportCommand),
+}
+
+/// What to do with the optional LLM proposal interface.
+#[derive(Debug, Subcommand)]
+pub(crate) enum LlmCommand {
+    /// Show whether this binary can call a model (default: no).
+    Status,
+
+    /// Produce an **unverified** proposal for a subject and evidence text.
+    ///
+    /// Requires `--features llm` and an explicit provider. Output is never authoritative.
+    Propose(LlmProposeArgs),
+}
+
+/// Arguments for `brolga llm propose`.
+#[derive(Debug, Args)]
+pub(crate) struct LlmProposeArgs {
+    /// Subject (for example an observable spelling).
+    pub(crate) subject: String,
+
+    /// Evidence text file (untrusted). Required.
+    #[arg(long)]
+    pub(crate) evidence: PathBuf,
+
+    /// Provider: `mock` (no network), or with `llm` feature: `ollama`, `llamacpp`, `openai`.
+    #[arg(long, default_value = "mock")]
+    pub(crate) provider: String,
+
+    /// Model name for HTTP providers.
+    #[arg(long)]
+    pub(crate) model: Option<String>,
+
+    /// Base URL for OpenAI-compatible endpoints (remote requires redistribute capability).
+    #[arg(long)]
+    pub(crate) base_url: Option<String>,
 }
 
 /// What to ask about exporting.
@@ -791,6 +830,7 @@ impl Command {
             Self::Context(_) => "context",
             Self::Mapping(_) => "mapping",
             Self::Plugin(_) => "plugin",
+            Self::Llm(_) => "llm",
             Self::Export(_) => "export",
         }
     }

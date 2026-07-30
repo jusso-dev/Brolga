@@ -12,6 +12,7 @@ members = [
     "crates/brolga-export",
     "crates/brolga-graph",
     "crates/brolga-ingest",
+    "crates/brolga-llm",
     "crates/brolga-model",
     "crates/brolga-plugin-host",
     "crates/brolga-plugin-sdk",

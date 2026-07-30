@@ -8,7 +8,7 @@ exception to a project-wide prohibition.
 
 | ADR | Title | Status | Issue |
 | --- | --- | --- | --- |
-| [0001](0001-workspace-boundaries-and-public-interface-versioning.md) | Cargo workspace boundaries and public interface versioning | accepted (§4 amended by 0002; §1 amended by 0003, 0004, 0005, 0007, 0008, and 0009) | [#2](https://github.com/jusso-dev/Brolga/issues/2) |
+| [0001](0001-workspace-boundaries-and-public-interface-versioning.md) | Cargo workspace boundaries and public interface versioning | accepted (§4 amended by 0002; §1 amended by 0003–0005 and 0007–0010) | [#2](https://github.com/jusso-dev/Brolga/issues/2) |
 | [0002](0002-raise-msrv-to-1-88-for-a-security-advisory.md) | Raise the MSRV to 1.88.0 to take a security fix | accepted | [#9](https://github.com/jusso-dev/Brolga/issues/9) |
 | [0003](0003-ingestion-crate-boundary-and-parser-panic-policy.md) | The ingestion crate boundary, and how a parser is stopped from panicking | accepted | [#11](https://github.com/jusso-dev/Brolga/issues/11) |
 | [0004](0004-graph-crate-boundary.md) | The graph crate boundary | accepted | [#20](https://github.com/jusso-dev/Brolga/issues/20) |
@@ -17,6 +17,7 @@ exception to a project-wide prohibition.
 | [0007](0007-export-crate-boundary-and-the-policy-gate.md) | The export crate boundary, and a policy gate that cannot be bypassed | accepted | [#54](https://github.com/jusso-dev/Brolga/issues/54) |
 | [0008](0008-plugin-sdk-and-wit-abi.md) | The plugin SDK crate boundary, and a WIT ABI that cannot smuggle host access | accepted | [#46](https://github.com/jusso-dev/Brolga/issues/46) |
 | [0009](0009-capability-limited-wasm-plugin-host.md) | A capability-limited WebAssembly plugin host | accepted | [#48](https://github.com/jusso-dev/Brolga/issues/48) |
+| [0010](0010-optional-llm-proposal-providers.md) | Optional LLM proposal providers, disabled by default | accepted | [#49](https://github.com/jusso-dev/Brolga/issues/49) |
 
 ## Rules
 
