@@ -1,9 +1,9 @@
 //! PostgreSQL backend foundation (feature `postgres`, ADR 0011 / #55).
 //!
 //! This module opens a connection and applies the same migration identifiers as SQLite after a
-//! deterministic dialect transform. Full [`IntelligenceStore`] parity and dual-backend contract
-//! tests land as follow-up commits on this issue; the checksum immutability contract is enforced
-//! here already.
+//! deterministic dialect transform. Full [`crate::IntelligenceStore`] parity and dual-backend
+//! contract tests land as follow-up commits on this issue; the checksum immutability contract is
+//! enforced here already.
 
 use postgres::{Client, NoTls};
 
