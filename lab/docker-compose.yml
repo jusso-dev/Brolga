@@ -1,0 +1,117 @@
+# Threat-feed lab — issue #60.
+# Profiles: fixtures (default demo path), postgres (optional store).
+name: brolga-lab
+
+services:
+  feed-simulator:
+    profiles: ["fixtures"]
+    image: nginx:1.27-alpine
+    restart: "no"
+    volumes:
+      - ./fixtures:/usr/share/nginx/html:ro
+      - ./nginx-default.conf:/etc/nginx/conf.d/default.conf:ro
+    # Lab-internal only; not published to the host by default.
+    expose:
+      - "80"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx
+      - /var/run
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    mem_limit: 128m
+    pids_limit: 64
+
+  brolga:
+    profiles: ["fixtures"]
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: brolga:lab
+    restart: "no"
+    command: ["doctor"]
+    volumes:
+      - brolga-data:/data
+      - ./fixtures:/feeds:ro
+      - ./output:/output
+    # Allow reachability to feed-simulator only (compose network).
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    mem_limit: 2g
+    pids_limit: 256
+
+  ingest-once:
+    profiles: ["fixtures"]
+    image: brolga:lab
+    restart: "no"
+    depends_on:
+      - brolga
+      - feed-simulator
+    volumes:
+      - brolga-data:/data
+      - ./fixtures:/feeds:ro
+      - ./scripts:/scripts:ro
+      - ./output:/output
+    entrypoint: ["/bin/sh", "/scripts/ingest-once.sh"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    mem_limit: 2g
+    pids_limit: 256
+
+  demo:
+    profiles: ["fixtures"]
+    image: brolga:lab
+    restart: "no"
+    depends_on:
+      - brolga
+    volumes:
+      - brolga-data:/data
+      - ./scripts:/scripts:ro
+      - ./output:/output
+    entrypoint: ["/bin/sh", "/scripts/demo.sh"]
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - "no-new-privileges:true"
+    mem_limit: 1g
+    pids_limit: 128
+
+  postgres:
+    profiles: ["postgres"]
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      POSTGRES_USER: brolga
+      POSTGRES_PASSWORD: ${BROLGA_POSTGRES_PASSWORD:-lab-only-not-a-secret}
+      POSTGRES_DB: brolga
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brolga -d brolga"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 512m
+    pids_limit: 128
+
+volumes:
+  brolga-data:
+  pg-data:

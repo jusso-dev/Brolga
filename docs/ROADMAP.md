@@ -1,6 +1,6 @@
 # Brolga roadmap
 
-Status: `v0.1.0 — Foundation`, `v0.2.0 — Core ingestion`, and `v0.3.0 — Intelligence graph` are complete; `v0.4.0` has not started. `brolga ingest`, `stats`, `show`, `sources`, and `quarantine` work; the graph layer is library code with no command reaching it, which is #34. GitHub milestones and issues are the source of work status.
+Status: **v0.1.0–v0.7.0 issue lists and GitHub milestones are closed.** Active work is **v1.0.0 — Stable release** (#51 and remaining open issues). GitHub milestones are the source of work status; this document summarises exit gates.
 
 ## Release sequence
 
@@ -196,35 +196,35 @@ against the in-memory original.
 the graph layer is a Rust library and nothing else — that is #34, in `v0.5.0`. `brolga context`
 still exits `5`.
 
-### v0.4.0 — Compression engine
+### v0.4.0 — Compression engine — complete
 
-Implement context-pack schema, profiles, ranking, clustering, condensation, budgets, progressive disclosure, expansion, fingerprints, and quality metrics.
+Context-pack schema, profiles, ranking, clustering, condensation, budgets, progressive disclosure, expansion, fingerprints, and quality metrics ([#26](https://github.com/jusso-dev/Brolga/issues/26)–[#32](https://github.com/jusso-dev/Brolga/issues/32)).
 
 Exit gate: deterministic golden packs remain within declared budget tolerance while retaining required evidence, contradictions, markings, exact observables, and exclusions.
 
-### v0.5.0 — Agent interfaces
+### v0.5.0 — Agent interfaces — complete
 
-Complete CLI workflows, local HTTP API, OpenAPI, authenticated network access, MCP stdio intent tools, policy enforcement, auditing, metrics, and end-to-end demonstration.
+CLI workflows, local HTTP API, OpenAPI, MCP stdio, policy before output, audit/observability, end-to-end demos ([#33](https://github.com/jusso-dev/Brolga/issues/33)–[#39](https://github.com/jusso-dev/Brolga/issues/39)).
 
 Exit gate: CLI, HTTP, and MCP produce schema-equivalent policy-safe packs and can expand selected output back to canonical and source evidence.
 
-### v0.6.0 — Connectors
+### v0.6.0 — Connectors — complete
 
-Add read-only MISP, TAXII 2.0/2.1, and OpenCTI connectors with incremental checkpoints, pagination, TLS, proxies, bounded retries, and SSRF controls.
+Read-only MISP, TAXII 2.0/2.1, OpenCTI, shared connector safety and checkpoints ([#40](https://github.com/jusso-dev/Brolga/issues/40)–[#44](https://github.com/jusso-dev/Brolga/issues/44)).
 
 Exit gate: mock-server integration tests prove correct incremental retrieval, failure recovery, provenance, and no upstream writes.
 
-### v0.7.0 — Extension system
+### v0.7.0 — Extension system — complete
 
-Add stable plugin SDK, declarative mappings, WIT ABI, capability-limited WebAssembly host, optional LLM proposal interface, and plugin examples.
-
-Mappings ([#47](https://github.com/jusso-dev/Brolga/issues/47)), plugin SDK/WIT ([#46](https://github.com/jusso-dev/Brolga/issues/46)), WebAssembly host ([#48](https://github.com/jusso-dev/Brolga/issues/48)), optional LLM proposals ([#49](https://github.com/jusso-dev/Brolga/issues/49)), and plugin examples/guide ([#50](https://github.com/jusso-dev/Brolga/issues/50)) land: package load, grants, limits, Wasmtime sandbox, WIT `invoke.call`, parser/exporter fixtures, `brolga plugin run` (`--features plugins`), `brolga-llm` + `brolga llm` (`--features llm`), and `docs/PLUGIN-DEVELOPMENT.md`. Residual non-blocking work: broader adversarial guests and full pipeline wiring of plugins into ingest/export paths.
+Plugin SDK/WIT, mappings, Wasm host, optional LLM proposals, examples and development guide ([#45](https://github.com/jusso-dev/Brolga/issues/45)–[#50](https://github.com/jusso-dev/Brolga/issues/50)). Residual non-blocking: broader adversarial guests and deeper pipeline wiring of plugins into ingest/export paths.
 
 Exit gate: plugins run without filesystem or network access by default, remain bounded, declare compatibility and capabilities, and cannot bypass policy.
 
-### v1.0.0 — Stable release
+### v1.0.0 — Stable release — **active**
 
-Finish required parsers and exporters, PostgreSQL, safe query language, fuzzing, property and integration tests, measured benchmarks, full documentation, release hardening, and acceptance audit.
+Finish remaining formats, PostgreSQL + safe query language ([#55](https://github.com/jusso-dev/Brolga/issues/55)), property/fuzz/integration suites ([#56](https://github.com/jusso-dev/Brolga/issues/56)), benchmarks ([#57](https://github.com/jusso-dev/Brolga/issues/57)), documentation ([#58](https://github.com/jusso-dev/Brolga/issues/58)), acceptance audit ([#59](https://github.com/jusso-dev/Brolga/issues/59)), and Docker Compose threat-feed lab ([#60](https://github.com/jusso-dev/Brolga/issues/60)). Epic: [#51](https://github.com/jusso-dev/Brolga/issues/51).
+
+There is **no separate v0.8.0 milestone**; ADR 0007’s historical “v0.8.0 — Exporters” label refers to work tracked under v1.0.0 (#54 closed).
 
 Exit gate: all initial acceptance criteria have evidence; Linux, macOS, and Windows builds pass; benchmark claims are reproducible; no placeholder production code or undocumented untrusted-input panic path remains.
 

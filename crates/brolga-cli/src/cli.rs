@@ -641,6 +641,12 @@ pub(crate) struct QuarantineArgs {
 /// `brolga search`.
 #[derive(Debug, Args)]
 pub(crate) struct SearchArgs {
+    /// Safe query language expression (ADR 0011). Example: `kind = threat_actor and status = active`.
+    ///
+    /// Compiles to the same typed filter as `--kind` / `--status`. Cannot inject SQL.
+    #[arg(long = "query", value_name = "EXPR")]
+    pub(crate) query: Option<String>,
+
     /// Only entities of these kinds. Repeatable. Omitted admits every kind.
     #[arg(long = "kind", value_name = "KIND")]
     pub(crate) kinds: Vec<String>,
