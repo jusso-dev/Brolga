@@ -74,8 +74,8 @@ pub const CANONICAL_RECORDS_USE_MODEL_SCHEMAS: &str =
     "plugin parse/export bodies carry brolga-model schema_version tags; the host re-validates";
 
 pub use abi::{
-    PLUGIN_ABI_VERSION, PLUGIN_WIT_PACKAGE, WIT_WORLD, InvokeErrorBody, InvokeRequest,
-    InvokeResponse,
+    InvokeErrorBody, InvokeRequest, InvokeResponse, PLUGIN_ABI_VERSION, PLUGIN_WIT_PACKAGE,
+    WIT_WORLD,
 };
 pub use capability::Capability;
 pub use contract::{
@@ -84,5 +84,5 @@ pub use contract::{
 };
 pub use error::PluginError;
 pub use extension::ExtensionPoint;
-pub use manifest::{ExtensionPointDecl, PluginManifest, MANIFEST_SCHEMA};
+pub use manifest::{ExtensionPointDecl, MANIFEST_SCHEMA, PluginManifest};
 pub use version::{ApiVersion, VersionRange};

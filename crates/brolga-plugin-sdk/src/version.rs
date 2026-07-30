@@ -85,11 +85,7 @@ impl fmt::Display for ApiVersion {
         if self.patch == 0 {
             write!(formatter, "{}.{}", self.major, self.minor)
         } else {
-            write!(
-                formatter,
-                "{}.{}.{}",
-                self.major, self.minor, self.patch
-            )
+            write!(formatter, "{}.{}.{}", self.major, self.minor, self.patch)
         }
     }
 }
@@ -224,7 +220,12 @@ impl VersionRange {
 impl fmt::Display for VersionRange {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.max_exclusive {
-            Some(max) => write!(formatter, ">={},<{}", self.min.to_string_full(), max.to_string_full()),
+            Some(max) => write!(
+                formatter,
+                ">={},<{}",
+                self.min.to_string_full(),
+                max.to_string_full()
+            ),
             None => write!(formatter, ">={}", self.min.to_string_full()),
         }
     }
@@ -318,10 +319,7 @@ fn parse_bounded(value: &str) -> Result<VersionRange, PluginError> {
         reason: "bounded range needs a `>=` lower bound".to_owned(),
     })?;
 
-    Ok(VersionRange {
-        min,
-        max_exclusive,
-    })
+    Ok(VersionRange { min, max_exclusive })
 }
 
 #[cfg(test)]
