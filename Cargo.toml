@@ -2,7 +2,7 @@
 resolver = "3"
 # The fuzzing harness is not a member: `cargo-fuzz` needs nightly and `libfuzzer-sys`, and a member
 # would pull both into every `cargo build` and into the MSRV job, which builds on 1.88.0 stable.
-exclude = ["fuzz"]
+exclude = ["fuzz", "plugins/echo-guest"]
 
 members = [
     "crates/brolga-api",

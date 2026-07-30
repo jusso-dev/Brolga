@@ -17,6 +17,11 @@ path = "src/main.rs"
 [lints]
 workspace = true
 
+[features]
+default = []
+# Off-by-default WebAssembly plugin host (ADR 0001 §3, ADR 0009).
+plugins = ["dep:brolga-plugin-host", "brolga-plugin-host/runtime"]
+
 [dependencies]
 brolga-api = { version = "0.1.0", path = "../brolga-api" }
 brolga-config = { version = "0.1.0", path = "../brolga-config" }
@@ -25,6 +30,7 @@ brolga-graph = { version = "0.1.0", path = "../brolga-graph" }
 brolga-connectors = { version = "0.1.0", path = "../brolga-connectors" }
 brolga-ingest = { version = "0.1.0", path = "../brolga-ingest" }
 brolga-model = { version = "0.1.0", path = "../brolga-model" }
+brolga-plugin-host = { version = "0.1.0", path = "../brolga-plugin-host", optional = true }
 brolga-plugin-sdk = { version = "0.1.0", path = "../brolga-plugin-sdk" }
 brolga-security = { version = "0.1.0", path = "../brolga-security" }
 brolga-storage = { version = "0.1.0", path = "../brolga-storage" }

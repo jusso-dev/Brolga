@@ -249,19 +249,25 @@ pub(crate) struct MappingFileArgs {
     pub(crate) path: PathBuf,
 }
 
-/// What to do with a plugin manifest.
+/// What to do with a plugin manifest or package.
 #[derive(Debug, Subcommand)]
 pub(crate) enum PluginCommand {
     /// Load a plugin manifest and report every problem found.
     ///
     /// Exits zero only if the host would accept the document for loading. Does not execute any
-    /// WebAssembly — that is the plugin host milestone.
+    /// WebAssembly unless combined with a host-enabled build (`--features plugins`).
     Validate(PluginFileArgs),
 
     /// Show what a manifest declares, including fixed security refusals.
     ///
     /// The refusals are the half that matters when the plugin came from somewhere else.
     Explain(PluginFileArgs),
+
+    /// Execute `invoke.call` on a pure-compute plugin package (requires `--features plugins`).
+    ///
+    /// The package directory must contain `manifest.yml` and usually `component.wasm`. Default
+    /// sandbox: no filesystem, no network, fuel and wall-clock caps.
+    Run(PluginRunArgs),
 }
 
 /// A plugin manifest to read.
@@ -269,6 +275,25 @@ pub(crate) enum PluginCommand {
 pub(crate) struct PluginFileArgs {
     /// The manifest file. YAML or JSON.
     pub(crate) path: PathBuf,
+}
+
+/// Arguments for `brolga plugin run`.
+#[derive(Debug, Args)]
+pub(crate) struct PluginRunArgs {
+    /// Package directory (`manifest.yml` + optional `component.wasm`).
+    pub(crate) package: PathBuf,
+
+    /// Extension point name (for example `parser`).
+    #[arg(long)]
+    pub(crate) extension: String,
+
+    /// Contract version (for example `1.0`).
+    #[arg(long, default_value = "1.0")]
+    pub(crate) contract: String,
+
+    /// Request body file. Defaults to empty JSON object bytes `{}` when omitted.
+    #[arg(long)]
+    pub(crate) request: Option<PathBuf>,
 }
 
 /// `brolga mcp`.
