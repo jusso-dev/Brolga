@@ -144,7 +144,8 @@ jobs:
         with:
           key: postgres-contract
       - name: Run PostgreSQL contract tests
-        run: cargo test --locked -p brolga-storage --features postgres --test postgres_contract
+        # Shared database: migrate/write races under parallel default harness.
+        run: cargo test --locked -p brolga-storage --features postgres --test postgres_contract -- --test-threads=1
 
   # ---------------------------------------------------------------------------------------------
   # Documentation must build without warnings, because a broken intra-doc link is a broken
