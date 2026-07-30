@@ -1,0 +1,39 @@
+[package]
+name = "brolga-plugin-host"
+description = "Capability-limited WebAssembly host for Brolga plugins"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+categories = ["wasm"]
+keywords = ["threat-intelligence", "plugin", "wasm", "sandbox"]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+# Compiles Wasmtime and the component execute path. Off by default (ADR 0001 §3, ADR 0009).
+runtime = ["dep:wasmtime"]
+
+[dependencies]
+brolga-plugin-sdk = { version = "0.1.0", path = "../brolga-plugin-sdk" }
+brolga-security = { version = "0.1.0", path = "../brolga-security" }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+thiserror = "2.0.19"
+# 36.0.8: MSRV 1.86 (≤ our 1.88 floor) and includes GHSA-p8xm-42r7-89xg. Later majors
+# raise MSRV past 1.88 (e.g. 38→1.88 declared, 39→1.89).
+wasmtime = { version = "36.0.8", optional = true, default-features = false, features = [
+    "component-model",
+    "cranelift",
+    "parallel-compilation",
+    "runtime",
+] }
+
+[dev-dependencies]
+serde_json = "1.0.151"

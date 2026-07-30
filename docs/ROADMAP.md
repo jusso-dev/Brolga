@@ -218,7 +218,7 @@ Exit gate: mock-server integration tests prove correct incremental retrieval, fa
 
 Add stable plugin SDK, declarative mappings, WIT ABI, capability-limited WebAssembly host, optional LLM proposal interface, and plugin examples.
 
-In progress: declarative mappings ([#47](https://github.com/jusso-dev/Brolga/issues/47)) and the plugin SDK / WIT ABI ([#46](https://github.com/jusso-dev/Brolga/issues/46)) are library + CLI validate/explain surfaces; the WebAssembly host is [#48](https://github.com/jusso-dev/Brolga/issues/48).
+In progress: mappings ([#47](https://github.com/jusso-dev/Brolga/issues/47)) and plugin SDK/WIT ([#46](https://github.com/jusso-dev/Brolga/issues/46)) are done. WebAssembly host ([#48](https://github.com/jusso-dev/Brolga/issues/48)): package load, grants, limits, and Wasmtime sandbox (empty imports) land first; full WIT invoke + fixture components follow.
 
 Exit gate: plugins run without filesystem or network access by default, remain bounded, declare compatibility and capabilities, and cannot bypass policy.
 
