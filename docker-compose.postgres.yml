@@ -56,8 +56,6 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      brolga-api:
-        condition: service_started
     restart: "no"
     entrypoint: ["/usr/local/bin/brolga"]
     command:
