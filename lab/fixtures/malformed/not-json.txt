@@ -1,0 +1,2 @@
+this is not a stix bundle {
+broken on purpose for quarantine / ingest failure paths

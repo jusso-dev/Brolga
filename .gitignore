@@ -12,3 +12,7 @@
 .vscode/
 .claude/overnight-*/
 plugins/*/target/
+
+# Lab demo artefacts
+lab/output/
+

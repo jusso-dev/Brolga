@@ -60,7 +60,7 @@ fn propose<Out: Write, Err: Write>(
             "`brolga llm propose` requires `--features llm` (ADR 0010). \
              `brolga llm status` works without it.",
         );
-        return ExitCode::NotImplemented;
+        ExitCode::NotImplemented
     }
 
     #[cfg(feature = "llm")]

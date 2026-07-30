@@ -1,0 +1,4 @@
+# Deterministic plain-text IoC fixture (lab #60)
+1.2.3.4
+evil.example
+abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789
