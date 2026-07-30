@@ -24,6 +24,7 @@ mod exit;
 mod export_command;
 mod fetch_command;
 mod graph_commands;
+mod llm_command;
 mod mapping_command;
 mod mcp;
 mod output;

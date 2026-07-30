@@ -3,8 +3,9 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `mapping`, `plugin`, `export`, `stats`, `show`,
-`sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and `completion` are implemented.
+`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `mapping`, `plugin`, `llm`, `export`, `stats`,
+`show`, `sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and `completion` are
+implemented.
 
 `brolga completion <shell>` prints a completion script generated from **this build's** command tree,
 so it can never advertise a command the binary does not have — which would be worse than no
@@ -584,10 +585,35 @@ WebAssembly execution is off by default (ADR 0001 §3). Build with the feature t
 ```bash
 cargo build -p brolga-cli --features plugins
 brolga plugin run examples/plugins/echo --extension parser --contract 1.0
+brolga plugin run examples/plugins/exporter --extension exporter --contract 1.0
 ```
 
 The package directory needs `manifest.yml` and usually `component.wasm`. The sandbox has empty host
 imports (no WASI), fuel, and wall-clock caps. Guest errors print as failure exit codes.
+
+Full author guide: [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md).
+
+## `brolga llm`
+
+Optional language-model **proposals** (ADR 0010, [#49](https://github.com/jusso-dev/Brolga/issues/49)).
+Default builds never call a model.
+
+```bash
+brolga llm status
+# Propose requires a build with --features llm
+cargo build -p brolga-cli --features llm
+brolga llm propose 1.2.3.4 --evidence ./notes.txt --provider mock
+```
+
+| Subcommand | Default build | With `--features llm` |
+| --- | --- | --- |
+| `status` | Reports feature disabled | Reports feature enabled |
+| `propose` | Exit `5` (not implemented) | Calls the named provider |
+
+Providers: `mock` (no network), `disabled`, `ollama` / `llamacpp` (loopback OpenAI-compat HTTP),
+`openai` (library path for remote + redistribute policy; CLI refuses a bare remote until configured).
+
+Every proposal is **untrusted** and **unverified**. There is no tool channel on the wire.
 
 ### A mapping is data, not code
 

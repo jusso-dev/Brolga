@@ -351,7 +351,13 @@ extension_points:
         let package = echo_package();
 
         let json = engine.guest_manifest_json(&package).unwrap();
-        assert!(json.contains("example.parser.echo"), "{json}");
+        // Guest manifest may list multiple points; package dir name is separate.
+        assert!(
+            json.contains("example.fixture.echo") || json.contains("example.parser.echo"),
+            "{json}"
+        );
+        assert!(json.contains("parser"), "{json}");
+        assert!(json.contains("exporter"), "{json}");
 
         let result = engine
             .invoke(&package, "parser", "1.0", b"hello-indicator")
@@ -362,15 +368,18 @@ extension_points:
             body.contains("\"echo_bytes\":15") || body.contains("echo_bytes\":15"),
             "{body}"
         );
+
+        let export = engine.invoke(&package, "exporter", "1.0", b"{}").unwrap();
+        let export_body = String::from_utf8(export.body).unwrap();
+        assert!(export_body.contains("lossiness"), "{export_body}");
+        assert!(export_body.contains("derived"), "{export_body}");
     }
 
     #[test]
     fn echo_fixture_unknown_extension_is_guest_error() {
         let engine = PluginEngine::new(PluginLimits::defaults()).unwrap();
         let package = echo_package();
-        let error = engine
-            .invoke(&package, "exporter", "1.0", b"{}")
-            .unwrap_err();
+        let error = engine.invoke(&package, "policy", "1.0", b"{}").unwrap_err();
         match error {
             HostError::Guest { code, .. } => assert_eq!(code, "unknown-extension"),
             other => panic!("expected Guest, got {other:?}"),
