@@ -4,7 +4,10 @@
 #   docker compose -f docker-compose.yml -f docker-compose.postgres.yml \
 #     --profile serve --profile postgres up -d --build
 #
-# Image is built with BROLGA_FEATURES=postgres. API opens postgres via --database URL.
+# Image is built with BROLGA_FEATURES=postgres. API and CLI open postgres via --database URL.
+#
+# The base `brolga` service uses network_mode: none (SQLite airgap). This overlay resets that
+# so CLI containers can reach the `postgres` service on the Compose network.
 name: brolga
 
 services:
@@ -27,6 +30,22 @@ services:
     pids_limit: 128
     # Optional host publish for contract tests from a workstation:
     # ports: ["5433:5432"]
+
+  brolga:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BROLGA_FEATURES: postgres
+    image: brolga:local-postgres
+    # Clear airgap from the base file so this service joins the project network.
+    network_mode: !reset null
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Operators must pass the URL (doctor has no --database flag; use any store command):
+    #   docker compose -f docker-compose.yml -f docker-compose.postgres.yml run --rm brolga \
+    #     stats --database "postgres://brolga:${BROLGA_POSTGRES_PASSWORD}@postgres:5432/brolga"
 
   brolga-api:
     profiles: ["serve"]

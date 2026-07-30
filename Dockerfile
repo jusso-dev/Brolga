@@ -51,8 +51,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
 # megabytes, and it supplies a shell, which is the difference between diagnosing a stuck
 # deployment and guessing at it.
 #
-# No `ca-certificates` and no network client of any kind. Brolga makes no outbound connections;
-# connectors are `v0.6.0`, and this is the line to revisit when they arrive.
+# No `ca-certificates` by default. File ingest needs none. `brolga fetch` needs TLS roots and a
+# network — rebuild with ca-certificates (or mount a trust store) when operators use connectors.
 FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce AS runtime
 
 LABEL org.opencontainers.image.title="brolga" \
@@ -74,6 +74,9 @@ RUN addgroup -g 65532 -S brolga \
     && chown brolga:brolga /data
 
 COPY --from=builder /usr/local/bin/brolga /usr/local/bin/brolga
+# Offline demo journey (examples/demo) for hosts without a bind-mounted feeds/ directory.
+COPY --chown=brolga:brolga examples/demo/feed.json /feeds/demo-misp.json
+COPY --chown=brolga:brolga examples/demo/rule.yml /feeds/demo-sigma.yml
 
 USER brolga:brolga
 

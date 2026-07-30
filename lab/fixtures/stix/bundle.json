@@ -1,0 +1,120 @@
+{
+  "type": "bundle",
+  "id": "bundle--0d1c0e11-8f2a-4b3e-9f7a-1c2d3e4f5a6b",
+  "objects": [
+    {
+      "type": "marking-definition",
+      "spec_version": "2.1",
+      "id": "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9",
+      "created": "2017-01-20T00:00:00.000Z",
+      "definition_type": "tlp",
+      "name": "TLP:AMBER",
+      "definition": { "tlp": "amber" }
+    },
+    {
+      "type": "intrusion-set",
+      "spec_version": "2.1",
+      "id": "intrusion-set--1a2b3c4d-0000-4000-8000-000000000001",
+      "created": "2024-01-01T00:00:00.000Z",
+      "modified": "2024-06-01T00:00:00.000Z",
+      "name": "Bunyip Panda",
+      "description": "A tracked intrusion set. Narrative text, treated as untrusted evidence.",
+      "aliases": ["BUNYIP", "TA-9999"],
+      "object_marking_refs": ["marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"]
+    },
+    {
+      "type": "malware",
+      "spec_version": "2.1",
+      "id": "malware--1a2b3c4d-0000-4000-8000-000000000002",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Dropbear",
+      "is_family": true
+    },
+    {
+      "type": "attack-pattern",
+      "spec_version": "2.1",
+      "id": "attack-pattern--1a2b3c4d-0000-4000-8000-000000000003",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Command and Scripting Interpreter: PowerShell",
+      "external_references": [
+        {
+          "source_name": "mitre-attack",
+          "external_id": "T1059.001",
+          "url": "https://attack.mitre.org/techniques/T1059/001"
+        }
+      ]
+    },
+    {
+      "type": "domain-name",
+      "spec_version": "2.1",
+      "id": "domain-name--1a2b3c4d-0000-4000-8000-000000000004",
+      "value": "EXAMPLE.COM."
+    },
+    {
+      "type": "ipv4-addr",
+      "spec_version": "2.1",
+      "id": "ipv4-addr--1a2b3c4d-0000-4000-8000-000000000005",
+      "value": "192.0.2.1"
+    },
+    {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--1a2b3c4d-0000-4000-8000-000000000006",
+      "created": "2024-01-01T00:00:00.000Z",
+      "relationship_type": "uses",
+      "source_ref": "intrusion-set--1a2b3c4d-0000-4000-8000-000000000001",
+      "target_ref": "malware--1a2b3c4d-0000-4000-8000-000000000002",
+      "object_marking_refs": ["marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"]
+    },
+    {
+      "type": "relationship",
+      "spec_version": "2.1",
+      "id": "relationship--1a2b3c4d-0000-4000-8000-000000000007",
+      "created": "2024-01-01T00:00:00.000Z",
+      "relationship_type": "beguiles",
+      "source_ref": "intrusion-set--1a2b3c4d-0000-4000-8000-000000000001",
+      "target_ref": "attack-pattern--1a2b3c4d-0000-4000-8000-000000000003"
+    },
+    {
+      "type": "campaign",
+      "spec_version": "2.1",
+      "id": "campaign--1a2b3c4d-0000-4000-8000-000000000008",
+      "created": "2023-01-01T00:00:00.000Z",
+      "modified": "2024-01-01T00:00:00.000Z",
+      "name": "Operation Withdrawn",
+      "revoked": true
+    },
+    {
+      "type": "identity",
+      "spec_version": "2.1",
+      "id": "identity--1a2b3c4d-0000-4000-8000-00000000000a",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Coastal Water Authority",
+      "identity_class": "organization"
+    },
+    {
+      "type": "infrastructure",
+      "spec_version": "2.1",
+      "id": "infrastructure--1a2b3c4d-0000-4000-8000-00000000000b",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Bunyip staging servers",
+      "infrastructure_types": ["hosting-malware"]
+    },
+    {
+      "type": "course-of-action",
+      "spec_version": "2.1",
+      "id": "course-of-action--1a2b3c4d-0000-4000-8000-00000000000c",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Block outbound PowerShell",
+      "description": "A mitigation. No canonical entity kind means one, so this is quarantined."
+    },
+    {
+      "type": "grouping",
+      "spec_version": "2.1",
+      "id": "grouping--1a2b3c4d-0000-4000-8000-000000000009",
+      "created": "2024-01-01T00:00:00.000Z",
+      "context": "suspicious-activity",
+      "object_refs": ["malware--1a2b3c4d-0000-4000-8000-000000000002"]
+    }
+  ]
+}

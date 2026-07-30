@@ -1,0 +1,9 @@
+<134>Jan  1 00:00:00 gateway CEF:0|Security|threatmanager|1.0|100|worm stopped|10|src=198.51.100.5 dst=203.0.113.9 msg=worm blocked on egress dhost=STAGING.EXAMPLE.NET. requestUrl=https://example.com/payload
+CEF:0|Security|threatmanager|1.0|100|worm stopped|10|src=198.51.100.5 suser=jsmith@example.com
+CEF:0|ACME|firewall|9.2|100|blocked a\|b flow|5|src=198.51.100.20 fileHash=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+CEF:0|Security|threatmanager|1.0|200|policy note|3|msg=nothing observable here
+LEEF:1.0|Vendor|Product|1.0|E100|src=198.51.100.30	dst=203.0.113.30	url=https://example.org/a
+LEEF:2.0|Vendor|Product|1.0|E200|^|src=198.51.100.31^dstHost=other.example.org
+CEF:0|Security|threatmanager|1.0|300|bad address|5|src=not-an-address dhost=singlelabel
+<13>Jan  1 00:00:00 host sshd[1]: Accepted publickey for root from 198.51.100.40 port 22
+CEF:0|Security|threatmanager

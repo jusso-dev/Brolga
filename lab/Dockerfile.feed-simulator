@@ -1,0 +1,7 @@
+# Static fixture server for the lab (no host bind mounts required).
+# syntax=docker/dockerfile:1
+
+FROM nginx:1.27-alpine
+
+COPY fixtures /usr/share/nginx/html
+COPY nginx-default.conf /etc/nginx/conf.d/default.conf

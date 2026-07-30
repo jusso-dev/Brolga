@@ -1,0 +1,20 @@
+title: Beacon to Reef Panda C2
+id: 6f3e2a10-9b4c-4d5e-8f01-2a3b4c5d6e7f
+status: experimental
+description: Detects outbound traffic to a published Reef Panda C2 address.
+author: Demo
+date: 2024/06/01
+level: high
+tags:
+  - attack.command_and_control
+  - attack.t1071.001
+logsource:
+  category: proxy
+  product: zeek
+detection:
+  selection:
+    DestinationIp: 203.0.113.42
+    DestinationHostname: c2.example.net
+  condition: selection
+falsepositives:
+  - Legitimate administrative traffic

@@ -9,6 +9,8 @@
 !Cargo.toml
 !Cargo.lock
 !crates/
+# Demo feeds for remote Compose contexts (no host bind mount required).
+!examples/demo/
 
 # Re-excluded after the allowlist, because the last matching pattern wins. A local `target/` is
 # the single largest thing in this repository and it is useless to the builder, which compiles

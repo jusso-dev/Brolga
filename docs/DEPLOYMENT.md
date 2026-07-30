@@ -81,6 +81,43 @@ A first run on a fresh volume creates and migrates the database, and looks like 
 `0 file(s) parsed` is not a problem. Brolga has built-in defaults for every setting and does not
 require a configuration file at all.
 
+## End-to-end homelab (SQLite + API)
+
+Copy-paste path from a clean checkout. Needs Docker Compose v2 and ~2 GB free for the release
+build. Secrets stay on the host (`.env` is gitignored).
+
+```bash
+cp .env.example .env
+# edit BROLGA_API_TOKEN to ≥16 random characters, or:
+printf 'BROLGA_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
+
+mkdir -p feeds
+docker compose build
+docker compose run --rm brolga doctor
+# Image ships demo files at /feeds/…; host drop dir is /feeds-host (see compose).
+docker compose run --rm brolga ingest \
+  /feeds/demo-misp.json /feeds/demo-sigma.yml --mode permissive
+docker compose run --rm brolga context ip 203.0.113.42
+docker compose --profile serve up -d brolga-api
+set -a; . ./.env; set +a
+curl -s localhost:8787/api/v1/health
+curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" localhost:8787/api/v1/stats
+```
+
+Multi-format offline lab (issue #60 fixtures): see [`lab/README.md`](../lab/README.md).
+
+PostgreSQL instead of SQLite:
+
+```bash
+export BROLGA_POSTGRES_PASSWORD=change-me
+# reuse BROLGA_API_TOKEN from .env
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml \
+  --profile serve --profile postgres up -d --build
+# doctor reads storage path from config (default SQLite). Open postgres via any store command:
+docker compose -f docker-compose.yml -f docker-compose.postgres.yml run --rm brolga \
+  stats --database "postgres://brolga:${BROLGA_POSTGRES_PASSWORD}@postgres:5432/brolga"
+```
+
 ## Configuration, if you want it
 
 Brolga does **not** search for a configuration file. There is no `/etc/brolga/brolga.yaml` that is
@@ -301,7 +338,7 @@ is currently true:
 
 | Setting | Why |
 | --- | --- |
-| `network_mode: none` | Brolga makes no outbound connections. Nothing fetches, polls, or reports. Removing the network enforces that rather than documenting it. Connectors arrive in `v0.6.0`; revisit then, and not before. |
+| `network_mode: none` | Default CLI service makes no outbound connections. File ingest needs none. Connectors (`brolga fetch`) need a network — drop this line or use a one-off `docker run` with a network when fetching. |
 | `read_only: true` | Everything Brolga writes is on the volume. The image layers never need to change. |
 | `tmpfs: /tmp` | SQLite falls back to temporary files for large sorts, and a read-only root would otherwise fail there under load rather than during a test. |
 | `cap_drop: ALL` | The binary opens files and writes a database. It needs no capability at all. |
@@ -321,34 +358,37 @@ Do not run two Brolga commands against the same database at once. SQLite permits
 timeout will absorb short overlaps, but a homelab has no reason to find the edges of that. Run
 imports one at a time.
 
-## What is not reachable
+## What is and is not reachable
 
-This is the section to read before building anything on top of Brolga. None of the following
-exists in the current release, and no container configuration will make it appear:
+Read this before planning around the container.
 
-- **No HTTP API.** There is no port to expose and nothing listens. The Compose file publishes no
-  ports because there is nothing to publish. Planned for `v0.5.0`.
-- **No MCP server.** An MCP stdio server is planned for `v0.5.0`. Nothing in this image speaks MCP.
-- **No connectors.** There is no MISP, TAXII, or OpenCTI client. Brolga will not reach out to any
-  upstream platform. Planned for `v0.6.0`.
-- **No scheduled or automatic fetching.** Nothing polls, nothing refreshes, nothing runs on a
-  timer. Every import is an operator running a command against a file that operator supplied.
-- **`brolga context` exits `5`.** Context packs — the compression engine, budgets, progressive
-  disclosure, the thing the project exists to do — are `v0.4.0`. The command is declared so that a
-  script written against a later Brolga fails with a message naming the milestone rather than an
-  unhelpful "unrecognised subcommand". It writes nothing to stdout.
-- **No WebAssembly plugin host.** Manifest validate/explain and the SDK/WIT ABI exist; execution is `v0.7.0` [#48](https://github.com/jusso-dev/Brolga/issues/48). Declarative mappings are available.
-- **PostgreSQL is optional.** Default images stay SQLite-only. Build with
-  `BROLGA_FEATURES=postgres` (see `Dockerfile`) and pass
-  `--database 'postgres://…'` / a libpq URL for server mode. See [STORAGE.md](STORAGE.md).
-- **No web interface.** None is planned for the initial release.
-- **No metrics endpoint, no Prometheus exporter, no structured audit sink.** Diagnostics go to
-  stderr, and `--log-format json` gives you one object per line for a log collector to pick up.
+### Works in the image (dogfood today)
 
-What you can dogfood today is the part below the compression engine: get real feeds in, see what
-canonicalised, see what was rejected and why, and see the original bytes that every record was
-derived from. That is a genuinely useful thing to run against your own data, and it is the part
-the project has evidence for.
+- **CLI workflows** on a volume-backed SQLite store: `ingest`, `stats`, `sources`, `show`,
+  `quarantine`, `search`, `neighbours`, `checkpoint`, `context`, `export`, `mapping`, `plugin`.
+- **HTTP API** behind the Compose `serve` profile (`brolga-api` on loopback `:8787` by default).
+  See [Running the HTTP API](#running-the-http-api) and [docs/API.md](API.md).
+- **MCP stdio** via `brolga mcp --database …` (not a long-running Compose service; run it where
+  the agent host can own the process).
+- **Connectors** via `brolga fetch` (MISP, TAXII, OpenCTI). The default CLI service uses
+  `network_mode: none`, so fetch needs a one-off container with a network, or a custom Compose
+  override. See [docs/CLI.md](CLI.md).
+- **PostgreSQL (optional).** Default images stay SQLite-only. Build with `BROLGA_FEATURES=postgres`
+  and use [`docker-compose.postgres.yml`](../docker-compose.postgres.yml). See [STORAGE.md](STORAGE.md).
+
+### Still not provided
+
+- **No scheduled or automatic fetching.** Nothing polls or refreshes on a timer. Use the host
+  scheduler (`cron`, systemd timer) with `docker compose run --rm brolga …`.
+- **No web UI.** None is planned for the initial stable release.
+- **No metrics endpoint / Prometheus exporter.** Diagnostics go to stderr; `--log-format json`
+  is one object per line for a log collector. Audit events are stored in the database, not pushed.
+- **Wasm plugin execution** is present for validated manifests; do not treat unvetted guests as
+  production without reading [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md) and the threat model.
+
+### Lab / fixture demo
+
+For offline multi-format ingest + normalised-output artefacts, use [`lab/`](../lab/) (`#60`).
 
 ## Troubleshooting
 

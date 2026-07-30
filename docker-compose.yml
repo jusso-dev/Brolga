@@ -35,14 +35,14 @@ services:
       # wants POSIX locking to behave, and a bind mount into a Docker VM on macOS or Windows is
       # the classic way to find out that it does not.
       - brolga-data:/data
-      # Where the operator drops feeds, exports, and bundles to be ingested. Read-only, because
-      # Brolga only ever reads them — mounting it writable would let a bug in an import path
-      # damage the operator's own copy of the evidence.
-      - ./feeds:/feeds:ro
+      # Operator drop directory. Mounted at /feeds-host (not /feeds) so an empty remote bind —
+      # common with Docker contexts over SSH — does not hide the demo files baked into the image
+      # at /feeds/demo-*.json. Local operators: `ingest /feeds-host/your-bundle.json`.
+      - ./feeds:/feeds-host:ro
 
-    # Brolga makes no outbound connections. Nothing in the current release fetches, polls, or
-    # reports anywhere, and the container is given no network so that this is enforced rather
-    # than merely documented. Connectors arrive in v0.6.0; remove this line then, and not before.
+    # File ingest makes no outbound connections. Keep network off for the default CLI service so
+    # a misconfigured fetch cannot surprise you. For `brolga fetch`, run a one-off container with
+    # a network, or compose with docker-compose.postgres.yml (which resets network_mode).
     network_mode: "none"
 
     # Everything writable is either the volume or a tmpfs, so the image layers can be read-only.

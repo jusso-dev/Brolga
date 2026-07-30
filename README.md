@@ -24,7 +24,9 @@ What works today:
 - Shared trust classification, resource limits, cancellation, and outbound network policy, backed by a [threat model](docs/THREAT-MODEL.md).
 - Cross-platform CI on Linux, macOS, and Windows, with licence, advisory, and supply-chain gates.
 
-What `v0.1.0` did not include: ingestion, the intelligence graph, compression, context packs, the HTTP API, the MCP server, connectors, and plugins. Ingestion arrived in `v0.2.0` — see below. The rest have not.
+What `v0.1.0` did not include (now shipped through later milestones): ingestion, the intelligence graph,
+compression, context packs, the HTTP API, the MCP server, connectors, and plugins. See the capability
+table below for current status.
 
 **`v0.2.0 — Core ingestion` is complete.** STIX 2.0 and 2.1 and MITRE ATT&CK, MISP events and
 warning lists, Sigma and YARA rules, OpenIOC and IODEF documents, CEF/LEEF/syslog telemetry, and
@@ -96,6 +98,23 @@ $ brolga mcp --database brolga.sqlite
 `crates/brolga-cli/tests/journey.rs` runs every command above from a clean database on each CI run,
 so this section cannot drift from the code without a test failing.
 
+### Homelab (Docker Compose)
+
+```bash
+cp .env.example .env
+printf 'BROLGA_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
+mkdir -p feeds
+docker compose build
+docker compose run --rm brolga doctor
+docker compose run --rm brolga ingest \
+  /feeds/demo-misp.json /feeds/demo-sigma.yml --mode permissive
+# Host drops: put files in ./feeds and ingest /feeds-host/…
+docker compose run --rm brolga context ip 203.0.113.42
+docker compose --profile serve up -d brolga-api
+```
+
+Full guide: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). Multi-format offline lab: [`lab/README.md`](lab/README.md).
+
 ### What works today, and what does not
 
 | Capability | Status |
@@ -114,8 +133,10 @@ so this section cannot drift from the code without a test failing.
 | Policy — TLP/PAP, capabilities, redistribution | working |
 | Interfaces — CLI, HTTP API with OpenAPI, MCP over stdio | working |
 | Expansion to L4/L5 | handles are issued; **the resolver endpoint is not built** |
-| Plugin SDK / WIT ABI / manifest validate | working (no WebAssembly host yet — execution is later in `v0.7.0`) |
-| PostgreSQL, WebAssembly plugin host, benchmarks | **not supported** |
+| Plugin SDK / WIT ABI / Wasm host / optional LLM proposals | working (see [PLUGIN-DEVELOPMENT.md](docs/PLUGIN-DEVELOPMENT.md)) |
+| PostgreSQL store (`--features postgres` / `BROLGA_FEATURES=postgres`) | working |
+| Homelab Compose + threat-feed lab fixtures | working — see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [`lab/`](lab/) |
+| Full #60 connector-simulation / live-public profiles, scale benchmarks, release audit | **in progress** (v1.0.0 open issues) |
 
 The middle two rows are the ones worth reading twice. Brolga will tell you what it does not know;
 it should also tell you what it does not yet do.
@@ -170,11 +191,12 @@ changed  entity/entity:cee261e1-…  [sources]
 Every change names the **facets** that moved, because "changed" on its own cannot tell a re-attested
 source from a renamed actor, and those call for different responses.
 
-**`brolga context` still exits `5`.** The compression engine is `v0.4.0`. There is no HTTP API, no
-MCP server, no connector, and nothing fetches a feed on a schedule — ingestion reads files you give
-it. This README will not pretend otherwise.
+**`brolga context` works** (see the quickstart above). HTTP API, MCP stdio, and read-only connectors
+are in; nothing polls feeds on a schedule — use the host scheduler with `docker compose run` or
+`brolga fetch` when you want remote retrieval. Docker/homelab path: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-Work continues as scoped, dependency-aware [GitHub issues](https://github.com/jusso-dev/Brolga/issues) across eight release milestones. Each defines outcome, scope, acceptance criteria, dependencies, non-goals, and security and provenance impact. See the [roadmap](docs/ROADMAP.md) before proposing implementation.
+Active work is **v1.0.0** (docs, lab coverage matrix, benchmarks, acceptance audit). See the
+[roadmap](docs/ROADMAP.md) and [open issues](https://github.com/jusso-dev/Brolga/issues).
 
 ## Try it
 

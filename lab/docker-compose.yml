@@ -1,23 +1,28 @@
 # Threat-feed lab — issue #60.
 # Profiles: fixtures (default demo path), postgres (optional store).
+#
+# Images bake fixtures + scripts so this works against a remote Docker context
+# (bind-mounting Mac paths into a remote engine fails).
 name: brolga-lab
 
 services:
   feed-simulator:
     profiles: ["fixtures"]
-    image: nginx:1.27-alpine
+    build:
+      context: .
+      dockerfile: Dockerfile.feed-simulator
+    image: brolga-feed-simulator:lab
     restart: "no"
-    volumes:
-      - ./fixtures:/usr/share/nginx/html:ro
-      - ./nginx-default.conf:/etc/nginx/conf.d/default.conf:ro
     # Lab-internal only; not published to the host by default.
     expose:
       - "80"
+    # nginx needs writable pid/cache paths (tmpfs below); root stays read-only.
     read_only: true
     tmpfs:
       - /var/cache/nginx
       - /var/run
       - /tmp
+      - /var/log/nginx
     cap_drop:
       - ALL
     security_opt:
@@ -28,16 +33,15 @@ services:
   brolga:
     profiles: ["fixtures"]
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
-    image: brolga:lab
+      # Requires brolga:lab (or brolga:local) already built from repo root Dockerfile.
+    image: brolga-lab:fixtures
     restart: "no"
     command: ["doctor"]
     volumes:
       - brolga-data:/data
-      - ./fixtures:/feeds:ro
-      - ./output:/output
-    # Allow reachability to feed-simulator only (compose network).
+      - lab-output:/output
     read_only: true
     tmpfs:
       - /tmp
@@ -50,16 +54,16 @@ services:
 
   ingest-once:
     profiles: ["fixtures"]
-    image: brolga:lab
+    image: brolga-lab:fixtures
     restart: "no"
     depends_on:
-      - brolga
-      - feed-simulator
+      brolga:
+        condition: service_completed_successfully
+      feed-simulator:
+        condition: service_started
     volumes:
       - brolga-data:/data
-      - ./fixtures:/feeds:ro
-      - ./scripts:/scripts:ro
-      - ./output:/output
+      - lab-output:/output
     entrypoint: ["/bin/sh", "/scripts/ingest-once.sh"]
     read_only: true
     tmpfs:
@@ -73,14 +77,14 @@ services:
 
   demo:
     profiles: ["fixtures"]
-    image: brolga:lab
+    image: brolga-lab:fixtures
     restart: "no"
     depends_on:
-      - brolga
+      ingest-once:
+        condition: service_completed_successfully
     volumes:
       - brolga-data:/data
-      - ./scripts:/scripts:ro
-      - ./output:/output
+      - lab-output:/output
     entrypoint: ["/bin/sh", "/scripts/demo.sh"]
     read_only: true
     tmpfs:
@@ -115,3 +119,4 @@ services:
 volumes:
   brolga-data:
   pg-data:
+  lab-output:
