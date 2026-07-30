@@ -227,6 +227,7 @@ dependencies = [
  "brolga-graph",
  "brolga-ingest",
  "brolga-model",
+ "brolga-plugin-host",
  "brolga-plugin-sdk",
  "brolga-security",
  "brolga-storage",
