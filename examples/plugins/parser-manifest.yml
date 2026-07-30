@@ -1,0 +1,23 @@
+# Example parser plugin manifest — validated by tests and `brolga plugin validate`.
+# No capabilities: pure compute. No component bytes yet (#48 host / #50 examples).
+schema_version: brolga.plugin.manifest/1.0
+name: example.parser.acme-feed
+version: 1.0.0
+api: "0.1.0"
+extension_points:
+  - kind: parser
+    contract_version: "1.0"
+    formats:
+      - application/x-acme-feed
+      - acme
+    outputs:
+      - claim
+      - sighting
+capabilities: []
+configuration_schema:
+  type: object
+  additionalProperties: false
+  properties:
+    default_tlp:
+      type: string
+      description: Optional marking hint; host policy still decides.

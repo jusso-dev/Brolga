@@ -147,7 +147,15 @@ impl IntelligenceParser for SigmaParser {
 
         // Documents are deserialised one at a time rather than collected, so a file whose third
         // document is malformed still contributes its first two — and says which one failed.
-        for (index, document) in serde_norway::Deserializer::from_str(text).enumerate() {
+        //
+        // Multi-document streams are split on line-leading `---` markers and each slice is parsed
+        // with `from_str`, which returns `Err` on hostile input. The multi-document
+        // `Deserializer` iterator in `serde_norway` can *panic* on the same bytes (observed on a
+        // fuzz finding: "unexpected end of mapping"), and release builds use `panic = "abort"`, so
+        // catching is not available. Splitting is imperfect for markers inside quoted strings; a
+        // false split becomes a rejected document rather than a process abort, which is the right
+        // trade for untrusted rules.
+        for (index, document) in yaml_document_slices(text).into_iter().enumerate() {
             context
                 .check_cancelled()
                 .map_err(|error| ParseError::new(error.to_string()))?;
@@ -158,7 +166,7 @@ impl IntelligenceParser for SigmaParser {
                 )));
             }
 
-            let value: serde_norway::Value = match serde::Deserialize::deserialize(document) {
+            let value: serde_norway::Value = match serde_norway::from_str(document) {
                 Ok(value) => value,
                 Err(error) => {
                     out.rejected.push(RejectedRecord {
@@ -202,6 +210,81 @@ impl IntelligenceParser for SigmaParser {
 
 /// A mapping failure: reason kind, sentence, and a short fragment naming the rule.
 type Rejection = (&'static str, String, Option<String>);
+
+/// Split a YAML stream into document slices at line-leading `---` markers.
+///
+/// Empty slices (a bare `---` with nothing after it) are dropped. A stream with no markers yields
+/// one slice — the whole input — so single-document rules keep one code path.
+///
+/// The marker line itself is not part of either adjacent document: a previous slice ends at the
+/// marker, and the next starts after it. Including the marker in the previous slice leaves
+/// `from_str` seeing a multi-document stream and refusing it.
+fn yaml_document_slices(text: &str) -> Vec<&str> {
+    let bytes = text.as_bytes();
+    let mut slices = Vec::new();
+    let mut start = 0usize;
+    let mut at_line_start = true;
+    let mut index = 0usize;
+    while index < bytes.len() {
+        if at_line_start && is_document_marker(bytes, index) {
+            if index > start {
+                push_trimmed_slice(&mut slices, text, start, index);
+            }
+            start = skip_document_marker_line(bytes, index);
+            index = start;
+            at_line_start = true;
+            continue;
+        }
+        at_line_start = bytes.get(index).copied() == Some(b'\n');
+        index = index.saturating_add(1);
+    }
+    push_trimmed_slice(&mut slices, text, start, text.len());
+    if slices.is_empty() {
+        // Preserve the empty-input path: the caller reports "no YAML document".
+        slices.push("");
+    }
+    slices
+}
+
+fn push_trimmed_slice<'a>(slices: &mut Vec<&'a str>, text: &'a str, start: usize, end: usize) {
+    if start >= end {
+        return;
+    }
+    let Some(slice) = text.get(start..end) else {
+        return;
+    };
+    let trimmed = slice.trim();
+    if !trimmed.is_empty() {
+        slices.push(trimmed);
+    }
+}
+
+/// Whether `bytes[index..]` begins a multi-document marker line (`---`, optional trailing space).
+fn is_document_marker(bytes: &[u8], index: usize) -> bool {
+    let Some(rest) = bytes.get(index..) else {
+        return false;
+    };
+    if rest.get(..3) != Some(b"---") {
+        return false;
+    }
+    match rest.get(3).copied() {
+        None | Some(b'\n') | Some(b'\r') | Some(b' ') | Some(b'\t') => true,
+        // `----` and `---foo` are not document markers.
+        Some(_) => false,
+    }
+}
+
+/// Byte index after the marker line that starts at `index`.
+fn skip_document_marker_line(bytes: &[u8], index: usize) -> usize {
+    let mut cursor = index.saturating_add(3);
+    while let Some(&byte) = bytes.get(cursor) {
+        cursor = cursor.saturating_add(1);
+        if byte == b'\n' {
+            break;
+        }
+    }
+    cursor
+}
 
 /// Map one Sigma document to the rule entity and everything hanging off it.
 fn map_rule(

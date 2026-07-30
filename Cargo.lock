@@ -200,6 +200,7 @@ dependencies = [
  "brolga-graph",
  "brolga-ingest",
  "brolga-model",
+ "brolga-plugin-sdk",
  "brolga-security",
  "brolga-storage",
  "clap",
@@ -301,6 +302,19 @@ dependencies = [
  "time",
  "url",
  "uuid",
+]
+
+[[package]]
+name = "brolga-plugin-sdk"
+version = "0.1.0"
+dependencies = [
+ "brolga-model",
+ "brolga-security",
+ "schemars",
+ "serde",
+ "serde_json",
+ "serde_norway",
+ "thiserror",
 ]
 
 [[package]]

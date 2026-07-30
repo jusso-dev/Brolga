@@ -28,6 +28,7 @@ mod mapping_command;
 mod mcp;
 mod output;
 mod plan_command;
+mod plugin_command;
 mod serve_command;
 mod store_commands;
 mod telemetry;
