@@ -1,0 +1,5 @@
+[
+  {"type": "ipv4", "value": "198.51.100.7"},
+  {"type": "domain", "value": "phish.example"},
+  {"type": "url", "value": "https://phish.example/login"}
+]

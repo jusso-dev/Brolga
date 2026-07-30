@@ -40,6 +40,15 @@ pub(crate) fn search<Out: Write, Err: Write>(
     };
 
     let mut query = EntityQuery::unfiltered();
+    if let Some(expression) = &args.query {
+        match brolga_query::compile_entity_query(expression, &brolga_query::Limits::default()) {
+            Ok(compiled) => query = compiled,
+            Err(error) => {
+                let _ = streams.problem(&format!("query error: {error}"));
+                return ExitCode::Usage;
+            }
+        }
+    }
     for name in &args.kinds {
         match parse_kind(name) {
             Some(kind) => {

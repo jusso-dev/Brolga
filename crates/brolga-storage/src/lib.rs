@@ -1,8 +1,9 @@
 //! Transactional persistence for Brolga's canonical records.
 //!
-//! Backend-neutral traits in [`store`], schema migrations in [`migration`], and a SQLite
-//! implementation in [`sqlite`]. Layer 1 under ADR 0001: it depends on `brolga-model` and nothing
-//! else first-party.
+//! Backend-neutral traits in [`store`], schema migrations in [`migration`], a SQLite
+//! implementation in [`sqlite`], and an optional PostgreSQL path behind feature `postgres`
+//! ([ADR 0011](https://github.com/jusso-dev/Brolga/blob/main/docs/adr/0011-postgresql-backend-and-safe-query-language.md)).
+//! Layer 1 under ADR 0001: it depends on `brolga-model` and nothing else first-party.
 //!
 //! # No arbitrary SQL crosses the trait boundary
 //!
@@ -86,9 +87,8 @@
 //!
 //! # What this crate deliberately leaves to others
 //!
-//! - **PostgreSQL.** Reserved as an off-by-default feature by ADR 0001 §3 and implemented in
-//!   `v1.0.0`. The traits here exist so it is a genuine alternative rather than a place where
-//!   SQLite-shaped strings happen to work.
+//! - **PostgreSQL.** Feature `postgres` (ADR 0011): connect + migrate with shared migration
+//!   checksums. Full [`IntelligenceStore`] parity and dual-backend contract tests continue on #55.
 //! - **Graph traversal.** `docs/ARCHITECTURE.md` commits to relational adjacency with bounded
 //!   recursive queries. This crate supplies the adjacency *primitives* —
 //!   [`EdgeQuery`], [`StoreRead::edges_at`], and [`StoreRead::degree`] — which read exactly one hop
@@ -97,7 +97,8 @@
 //!   of service with an index on it.
 //! - **Content-addressed blob retention.** [`SourceObject`](brolga_model::provenance::SourceObject)
 //!   metadata is stored; the bytes it addresses are a later milestone's problem.
-//! - **A query language.** Structured, safe queries arrive in `v1.0.0` and compile to these traits.
+//! - **A query language.** [`brolga-query`](https://github.com/jusso-dev/Brolga/tree/main/crates/brolga-query)
+//!   compiles human syntax to these traits (never to raw SQL).
 
 #![forbid(unsafe_code)]
 
@@ -108,9 +109,13 @@ pub mod cursor;
 pub mod decision;
 pub mod error;
 pub mod migration;
+pub mod postgres_sql;
 pub mod quarantine;
 pub mod sqlite;
 pub mod store;
+
+#[cfg(feature = "postgres")]
+pub mod postgres;
 
 pub use audit::{
     AuditAction, AuditEvent, BoundedLabels, FailurePolicy, MAX_LABEL_CARDINALITY, Outcome,
@@ -130,3 +135,6 @@ pub use store::{
     Direction, EdgeQuery, EntityQuery, IntelligenceStore, MigrationReport, Page, RecordKind,
     StoreRead, StoreWrite, UpsertOutcome,
 };
+
+#[cfg(feature = "postgres")]
+pub use postgres::PostgresStore;

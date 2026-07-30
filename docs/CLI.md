@@ -90,6 +90,14 @@ $ brolga --output jsonl search --kind intrusion_set
 {"_collection":"entities","id":"entity:8fd8cd7f-...","kind":"intrusion_set","name":"Bunyip Panda","schema":"brolga.cli.output/1.0","status":"active"}
 ```
 
+Safe query language ([#55](https://github.com/jusso-dev/Brolga/issues/55), ADR 0011) compiles to the
+same typed filter — never SQL:
+
+```bash
+brolga search --query 'kind = threat_actor and status = active'
+```
+
+
 The envelope field is `_collection`, not `kind`, because `kind` is a real field on an entity and an
 envelope that overwrote it would silently corrupt the value you filter on.
 

@@ -18,6 +18,7 @@ exception to a project-wide prohibition.
 | [0008](0008-plugin-sdk-and-wit-abi.md) | The plugin SDK crate boundary, and a WIT ABI that cannot smuggle host access | accepted | [#46](https://github.com/jusso-dev/Brolga/issues/46) |
 | [0009](0009-capability-limited-wasm-plugin-host.md) | A capability-limited WebAssembly plugin host | accepted | [#48](https://github.com/jusso-dev/Brolga/issues/48) |
 | [0010](0010-optional-llm-proposal-providers.md) | Optional LLM proposal providers, disabled by default | accepted | [#49](https://github.com/jusso-dev/Brolga/issues/49) |
+| [0011](0011-postgresql-backend-and-safe-query-language.md) | PostgreSQL backend and safe query language | accepted | [#55](https://github.com/jusso-dev/Brolga/issues/55) |
 
 ## Rules
 

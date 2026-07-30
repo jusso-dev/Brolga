@@ -1,0 +1,4 @@
+type,value,tlp
+ipv4,203.0.113.10,TLP:CLEAR
+domain,malware.example,TLP:CLEAR
+md5,d41d8cd98f00b204e9800998ecf8427e,TLP:CLEAR
