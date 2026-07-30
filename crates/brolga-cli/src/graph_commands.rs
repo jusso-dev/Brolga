@@ -20,7 +20,7 @@ use brolga_graph::{Checkpoint, TraversalLimits, TraversalRequest, traverse};
 use brolga_model::{Entity, EntityKind, Id, LifecycleStatus, NodeRef, Timestamp};
 use brolga_security::CancellationToken;
 use brolga_storage::{
-    CheckpointSummary, EntityQuery, IntelligenceStore, Page, SqliteStore, StorageError, StoreRead,
+    CheckpointSummary, EntityQuery, IntelligenceStore, OpenedStore, Page, StorageError, StoreRead,
 };
 
 use crate::cli::{
@@ -519,7 +519,7 @@ pub(crate) fn checkpoint_remove<Out: Write, Err: Write>(
 
 /// Load a stored checkpoint by name.
 fn load<Out: Write, Err: Write>(
-    store: &SqliteStore,
+    store: &OpenedStore,
     name: &str,
     streams: &mut Streams<Out, Err>,
 ) -> Result<Checkpoint, ExitCode> {
@@ -557,21 +557,12 @@ fn summary_of(name: &str, taken: &Checkpoint) -> CheckpointSummary {
     }
 }
 
-/// Open and migrate a store.
+/// Open and migrate a store (SQLite path or `postgres://` URL with `--features postgres`).
 fn open<Out: Write, Err: Write>(
     path: &Path,
     streams: &mut Streams<Out, Err>,
-) -> Result<SqliteStore, ExitCode> {
-    let mut store = SqliteStore::open(path, brolga_storage::sqlite::DEFAULT_BUSY_TIMEOUT_MS)
-        .map_err(|error| {
-            let _ = streams.problem(&format!("cannot open {}: {error}", path.display()));
-            ExitCode::Storage
-        })?;
-    store.migrate().map_err(|error| {
-        let _ = streams.problem(&format!("cannot migrate {}: {error}", path.display()));
-        ExitCode::Storage
-    })?;
-    Ok(store)
+) -> Result<OpenedStore, ExitCode> {
+    crate::store_commands::open_store(path, streams)
 }
 
 /// Parse a node identifier from the command line.

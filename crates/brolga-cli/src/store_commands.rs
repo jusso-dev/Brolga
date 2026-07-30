@@ -29,7 +29,7 @@ use brolga_ingest::{
 use brolga_model::provenance::{MediaType, SourceOrigin};
 use brolga_model::{ContentHash, Timestamp};
 use brolga_security::{CancellationToken, ResourceLimits};
-use brolga_storage::{IntelligenceStore, Page, RecordKind, SqliteStore, StorageError, StoreRead};
+use brolga_storage::{OpenedStore, Page, RecordKind, StorageError, StoreRead};
 
 use crate::cli::{IngestArgs, Mode, QuarantineArgs, ShowArgs};
 use crate::exit::ExitCode;
@@ -423,24 +423,21 @@ pub(crate) fn sources<Out: Write, Err: Write>(
 }
 
 /// Open and migrate a store, reporting failure the same way everywhere.
+///
+/// `path` is a filesystem path for SQLite, or a `postgres://` / `postgresql://` URL when the CLI is
+/// built with `--features postgres` (ADR 0011).
 pub(crate) fn open_store<Out: Write, Err: Write>(
     path: &Path,
     streams: &mut Streams<Out, Err>,
-) -> Result<SqliteStore, ExitCode> {
-    let mut store = SqliteStore::open(path, brolga_storage::sqlite::DEFAULT_BUSY_TIMEOUT_MS)
-        .map_err(|error| {
-            let _ = streams.problem(&format!("cannot open {}: {error}", path.display()));
-            ExitCode::Storage
-        })?;
-
+) -> Result<OpenedStore, ExitCode> {
+    let spec = path.to_string_lossy();
     // Migrating on open rather than behind a separate command. An operator who has to remember to
     // run a migration eventually will not, and the failure then surfaces much later as a confusing
     // query error rather than as a migration error.
-    store.migrate().map_err(|error| {
-        let _ = streams.problem(&format!("cannot migrate {}: {error}", path.display()));
+    OpenedStore::open(spec.as_ref()).map_err(|error| {
+        let _ = streams.problem(&format!("cannot open/migrate {spec}: {error}"));
         ExitCode::Storage
-    })?;
-    Ok(store)
+    })
 }
 
 /// Build a document from a file, letting detection decide the format.

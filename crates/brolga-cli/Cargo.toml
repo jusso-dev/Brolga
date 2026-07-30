@@ -23,6 +23,8 @@ default = []
 plugins = ["dep:brolga-plugin-host", "brolga-plugin-host/runtime"]
 # Off-by-default language-model proposals (ADR 0001 §3, ADR 0010).
 llm = ["dep:brolga-llm", "brolga-llm/http"]
+# Off-by-default PostgreSQL store (ADR 0001 §3, ADR 0011).
+postgres = ["brolga-storage/postgres"]
 
 [dependencies]
 brolga-api = { version = "0.1.0", path = "../brolga-api" }

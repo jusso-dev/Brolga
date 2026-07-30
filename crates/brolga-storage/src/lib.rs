@@ -110,6 +110,7 @@ pub mod cursor;
 pub mod decision;
 pub mod error;
 pub mod migration;
+pub mod open;
 pub mod postgres_sql;
 pub mod quarantine;
 pub mod sqlite;
@@ -130,6 +131,7 @@ pub use cursor::{ConnectorCursor, CursorStatus};
 pub use decision::GraphDecisionRow;
 pub use error::StorageError;
 pub use migration::{MIGRATIONS, Migration, latest_version};
+pub use open::{OpenedStore, is_postgres_url};
 pub use quarantine::{QuarantineEntry, QuarantineRecord, QuarantineStage};
 pub use sqlite::{SqliteStore, StorePath};
 pub use store::{
