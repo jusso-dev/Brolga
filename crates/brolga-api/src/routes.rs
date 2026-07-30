@@ -153,15 +153,17 @@ pub struct Readiness {
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if the store cannot be read.
-pub async fn ready<S: StoreRead>(
+pub async fn ready<S: StoreRead + Send + 'static>(
     State(state): State<Arc<ApiState<S>>>,
 ) -> Result<Json<Readiness>, ApiError> {
     let request_id = RequestId::generate();
     let schema_version = state
         .read(StoreRead::schema_version)
+        .await
         .map_err(|error| from_read_failure(&error, &request_id))?;
     let entities = state
         .read(|store| store.count(RecordKind::Entity))
+        .await
         .map_err(|error| from_read_failure(&error, &request_id))?;
 
     Ok(Json(Readiness {
@@ -198,7 +200,7 @@ impl EntityFilter {
 ///
 /// Returns [`ApiError::BadRequest`] for an unknown filter value, or
 /// [`ApiError::Internal`] if the store cannot be read.
-pub async fn search_entities<S: StoreRead>(
+pub async fn search_entities<S: StoreRead + Send + 'static>(
     State(state): State<Arc<ApiState<S>>>,
     Query(filter): Query<EntityFilter>,
 ) -> Result<Json<Envelope<Vec<Entity>>>, ApiError> {
@@ -217,7 +219,8 @@ pub async fn search_entities<S: StoreRead>(
 
     let page = filter.paging().into_page();
     let found = state
-        .read(|store| store.search_entities(&query, page))
+        .read(move |store| store.search_entities(&query, page))
+        .await
         .map_err(|error| from_read_failure(&error, &request_id))?;
 
     let returned = found.len();
@@ -229,7 +232,7 @@ pub async fn search_entities<S: StoreRead>(
 ///
 /// Returns [`ApiError::BadRequest`] for a malformed id, [`ApiError::NotFound`] if no such
 /// entity is stored, or [`ApiError::Internal`] if the store cannot be read.
-pub async fn get_entity<S: StoreRead>(
+pub async fn get_entity<S: StoreRead + Send + 'static>(
     State(state): State<Arc<ApiState<S>>>,
     Path(id): Path<String>,
 ) -> Result<Json<Envelope<Entity>>, ApiError> {
@@ -239,7 +242,8 @@ pub async fn get_entity<S: StoreRead>(
     })?;
 
     state
-        .read(|store| store.get_entity(parsed))
+        .read(move |store| store.get_entity(parsed))
+        .await
         .map_err(|error| from_read_failure(&error, &request_id))?
         .map(|entity| Json(Envelope::new(entity)))
         .ok_or(ApiError::NotFound { kind: "entity", id })
@@ -267,7 +271,7 @@ impl NeighbourFilter {
 /// Returns [`ApiError::BadRequest`] for a malformed id or unknown direction,
 /// [`ApiError::NotFound`] if no such entity is stored — which is a different answer from an
 /// entity with no edges — or [`ApiError::Internal`] if the store cannot be read.
-pub async fn entity_neighbours<S: StoreRead>(
+pub async fn entity_neighbours<S: StoreRead + Send + 'static>(
     State(state): State<Arc<ApiState<S>>>,
     Path(id): Path<String>,
     Query(filter): Query<NeighbourFilter>,
@@ -280,7 +284,8 @@ pub async fn entity_neighbours<S: StoreRead>(
     // Asking about an entity that does not exist is a different answer from an entity with no
     // edges, and a consumer deciding whether to create a case needs to tell them apart.
     let exists = state
-        .read(|store| store.get_entity(parsed))
+        .read(move |store| store.get_entity(parsed))
+        .await
         .map_err(|error| from_read_failure(&error, &request_id))?
         .is_some();
     if !exists {
@@ -303,7 +308,8 @@ pub async fn entity_neighbours<S: StoreRead>(
     let page = filter.paging().into_page();
     let query = EdgeQuery::at(NodeRef::Entity(parsed), direction);
     let edges = state
-        .read(|store| store.edges_at(&query, page))
+        .read(move |store| store.edges_at(&query, page))
+        .await
         .map_err(|error| from_read_failure(&error, &request_id))?;
 
     let returned = edges.len();
@@ -337,7 +343,7 @@ pub struct Stats {
 /// # Errors
 ///
 /// Returns [`ApiError::Internal`] if the store cannot be read.
-pub async fn stats<S: StoreRead>(
+pub async fn stats<S: StoreRead + Send + 'static>(
     State(state): State<Arc<ApiState<S>>>,
 ) -> Result<Json<Envelope<Stats>>, ApiError> {
     let request_id = RequestId::generate();
@@ -357,6 +363,7 @@ pub async fn stats<S: StoreRead>(
                 quarantined: store.quarantine_count()?,
             })
         })
+        .await
         .map_err(|error| from_read_failure(&error, &request_id))?;
 
     Ok(Json(Envelope::new(stats)))
