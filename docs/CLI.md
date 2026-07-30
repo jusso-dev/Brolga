@@ -3,8 +3,8 @@
 This describes what `v0.1.0` ships. Commands that arrive later are listed at the bottom; they exist
 in the binary today and fail with a documented exit code rather than being hidden.
 
-`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `mapping`, `export`, `stats`, `show`, `sources`,
-`quarantine`, `search`, `neighbours`, `checkpoint`, and `completion` are implemented.
+`ingest`, `fetch`, `context`, `mcp`, `explain-plan`, `mapping`, `plugin`, `export`, `stats`, `show`,
+`sources`, `quarantine`, `search`, `neighbours`, `checkpoint`, and `completion` are implemented.
 
 `brolga completion <shell>` prints a completion script generated from **this build's** command tree,
 so it can never advertise a command the binary does not have — which would be worse than no
@@ -563,6 +563,20 @@ from somewhere else. Neither reads a feed, opens a store, or touches a network.
 
 An invalid mapping exits `3` (configuration invalid), not `2` (usage): the command line was fine and
 the operator's file was not, and a script has to be able to tell the two apart.
+
+## `brolga plugin`
+
+Validate and explain a **plugin manifest** for the `brolga-plugin-sdk` / WIT ABI
+(`brolga:plugin@0.1.0`). This does **not** execute WebAssembly — the host is a later
+`v0.7.0` issue. It answers whether a third-party document would load, and what it claims.
+
+```bash
+brolga plugin validate examples/plugins/parser-manifest.yml
+brolga plugin explain  examples/plugins/parser-manifest.yml
+```
+
+`explain` always lists fixed refusals (no native `dlopen`, no FS/network without scoped grants,
+policy extensions are advisory only, plugin output is untrusted). An invalid manifest exits `3`.
 
 ### A mapping is data, not code
 
