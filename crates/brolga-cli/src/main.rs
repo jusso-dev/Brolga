@@ -26,6 +26,7 @@ mod fetch_command;
 mod graph_commands;
 mod mapping_command;
 mod mcp;
+mod plugin_command;
 mod output;
 mod plan_command;
 mod serve_command;

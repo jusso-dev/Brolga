@@ -337,7 +337,7 @@ exists in the current release, and no container configuration will make it appea
   disclosure, the thing the project exists to do — are `v0.4.0`. The command is declared so that a
   script written against a later Brolga fails with a message naming the milestone rather than an
   unhelpful "unrecognised subcommand". It writes nothing to stdout.
-- **No plugins and no declarative mappings.** `v0.7.0`.
+- **No WebAssembly plugin host.** Manifest validate/explain and the SDK/WIT ABI exist; execution is `v0.7.0` [#48](https://github.com/jusso-dev/Brolga/issues/48). Declarative mappings are available.
 - **No PostgreSQL.** SQLite is the only backend. Server mode is `v1.0.0`.
 - **No web interface.** None is planned for the initial release.
 - **No metrics endpoint, no Prometheus exporter, no structured audit sink.** Diagnostics go to

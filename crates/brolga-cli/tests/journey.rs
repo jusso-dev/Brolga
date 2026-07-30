@@ -361,6 +361,51 @@ fn an_invalid_mapping_exits_as_a_configuration_error() {
     );
 }
 
+/// Plugin manifests: validate a shipped example, explain refusals, reject wildcards as config errors.
+#[test]
+fn the_plugin_manifest_journey_runs_end_to_end() {
+    let manifest =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/parser-manifest.yml");
+    let manifest = manifest.to_str().expect("a usable path");
+
+    let validate = brolga(&["plugin", "validate", manifest]);
+    assert_eq!(code(&validate), 0, "{}", stderr(&validate));
+    assert!(
+        stdout(&validate).contains("valid"),
+        "validate must say the manifest is valid: {}",
+        stdout(&validate)
+    );
+
+    let explain = brolga(&["plugin", "explain", manifest]);
+    assert_eq!(code(&explain), 0, "{}", stderr(&explain));
+    let explained = stdout(&explain);
+    assert!(
+        explained.contains("refusals") || explained.contains("no native"),
+        "explain must surface security refusals: {explained}"
+    );
+    assert!(
+        explained.contains("pure compute") || explained.contains("capabilities"),
+        "explain must describe capabilities: {explained}"
+    );
+
+    let directory = tempfile::tempdir().expect("a temporary directory");
+    let path = directory.path().join("evil.yml");
+    std::fs::write(
+        &path,
+        "schema_version: brolga.plugin.manifest/1.0\nname: evil\nversion: 1\napi: \"0.1.0\"\n\
+         extension_points:\n  - kind: parser\n    contract_version: \"1.0\"\n\
+         capabilities:\n  - kind: network_egress\n    host: \"*\"\n",
+    )
+    .expect("write the manifest");
+    let rejected = brolga(&["plugin", "validate", path.to_str().unwrap()]);
+    assert_eq!(
+        code(&rejected),
+        3,
+        "wildcard capability is a configuration error: {}",
+        stderr(&rejected)
+    );
+}
+
 /// The README must say what Brolga cannot do, not only what it can.
 ///
 /// A capability table that lists only what works reads as a claim that everything else works too,
