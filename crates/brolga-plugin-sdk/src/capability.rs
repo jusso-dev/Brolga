@@ -25,7 +25,9 @@ use crate::error::PluginError;
 ///
 /// Serialised as a tagged object so scopes travel with the name and a bare string cannot imply
 /// host-wide access.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,
+)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 #[non_exhaustive]
 pub enum Capability {
@@ -97,7 +99,8 @@ fn validate_path_prefix(path_prefix: &str) -> Result<(), PluginError> {
     }
     if trimmed == "/" || trimmed == "\\" {
         return Err(PluginError::WildcardCapability {
-            reason: "filesystem path_prefix `/` is host-wide; scope to a concrete prefix".to_owned(),
+            reason: "filesystem path_prefix `/` is host-wide; scope to a concrete prefix"
+                .to_owned(),
         });
     }
     if trimmed == "*" || trimmed == "**" {

@@ -45,14 +45,17 @@ fn shipped_example_manifests_declare_required_fields_and_validate() {
     for name in ["parser-manifest.yml", "exporter-manifest.yml"] {
         let path = examples_dir().join(name);
         let bytes = fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
-        let manifest = PluginManifest::load(&bytes)
-            .unwrap_or_else(|e| panic!("{name} must validate: {e}"));
+        let manifest =
+            PluginManifest::load(&bytes).unwrap_or_else(|e| panic!("{name} must validate: {e}"));
         assert!(!manifest.name.is_empty());
         assert!(!manifest.version.is_empty());
         assert!(!manifest.extension_points.is_empty());
         // Capabilities, formats, outputs are present as fields (formats may be non-empty on examples).
         let explanation = manifest.explain();
-        assert!(explanation.abi_compatible, "{name} must match ABI {PLUGIN_ABI_VERSION}");
+        assert!(
+            explanation.abi_compatible,
+            "{name} must match ABI {PLUGIN_ABI_VERSION}"
+        );
         assert!(
             !explanation.refusals.is_empty(),
             "explain must list security refusals"

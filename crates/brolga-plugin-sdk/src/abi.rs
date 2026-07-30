@@ -56,7 +56,12 @@ pub fn verify_wit_package() -> Result<(), PluginError> {
         });
     }
     // Default security property: the world must not import wasi or host capability interfaces.
-    let forbidden = ["import wasi:", "import brolga:host", "import filesystem", "import network"];
+    let forbidden = [
+        "import wasi:",
+        "import brolga:host",
+        "import filesystem",
+        "import network",
+    ];
     for needle in forbidden {
         if WIT_WORLD.contains(needle) {
             return Err(PluginError::Abi {
