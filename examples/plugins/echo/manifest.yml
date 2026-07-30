@@ -1,0 +1,16 @@
+# Pure-compute echo plugin package. Component built from plugins/echo-guest
+# (wasm32-unknown-unknown, no WASI). See plugins/echo-guest/README.md.
+schema_version: brolga.plugin.manifest/1.0
+name: example.parser.echo
+version: 1.0.0
+api: "0.1.0"
+extension_points:
+  - kind: parser
+    contract_version: "1.0"
+    formats:
+      - application/x-echo
+    outputs:
+      - claim
+capabilities: []
+component:
+  path: component.wasm
