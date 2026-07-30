@@ -87,8 +87,9 @@
 //!
 //! # What this crate deliberately leaves to others
 //!
-//! - **PostgreSQL.** Feature `postgres` (ADR 0011): connect + migrate with shared migration
-//!   checksums. Full [`IntelligenceStore`] parity and dual-backend contract tests continue on #55.
+//! - **PostgreSQL.** Feature `postgres` (ADR 0011): full [`IntelligenceStore`] via
+//!   [`PostgresStore`], shared migration checksums, dual-backend contract tests when
+//!   `BROLGA_POSTGRES_URL` is set.
 //! - **Graph traversal.** `docs/ARCHITECTURE.md` commits to relational adjacency with bounded
 //!   recursive queries. This crate supplies the adjacency *primitives* —
 //!   [`EdgeQuery`], [`StoreRead::edges_at`], and [`StoreRead::degree`] — which read exactly one hop
