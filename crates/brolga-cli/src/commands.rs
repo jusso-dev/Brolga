@@ -10,8 +10,8 @@ use brolga_config::layer::Layer;
 use brolga_config::load::{Format, parse_layer};
 use brolga_config::service::{explain, resolve};
 use brolga_config::{Diagnostics, config_schema};
-use brolga_storage::sqlite::SqliteStore;
-use brolga_storage::store::{IntelligenceStore, RecordKind, StoreRead};
+use brolga_storage::OpenedStore;
+use brolga_storage::store::{RecordKind, StoreRead};
 
 use crate::cli::{
     CheckpointCommand, Cli, Command, CompletionArgs, ConfigCommand, GlobalOptions, InitArgs,
@@ -169,24 +169,17 @@ fn doctor<Out: Write, Err: Write>(
     });
 
     if let Some(resolved) = &resolved {
-        match SqliteStore::open(
-            &resolved.config.storage.sqlite.path,
-            resolved.config.storage.sqlite.busy_timeout_ms,
-        ) {
-            Ok(mut store) => {
-                match store.migrate() {
-                    Ok(report) => checks.push(Check::ok(
-                        "storage",
-                        &format!(
-                            "schema version {}{}",
-                            report.to_version,
-                            if report.changed() { ", migrated" } else { "" },
-                        ),
-                    )),
-                    Err(error) => {
-                        checks.push(Check::failed("storage migrations", &error.to_string()))
-                    }
-                }
+        let path = resolved.config.storage.sqlite.path.as_str();
+        match OpenedStore::open_with_timeout(path, resolved.config.storage.sqlite.busy_timeout_ms) {
+            Ok(store) => {
+                checks.push(Check::ok(
+                    "storage",
+                    &format!(
+                        "{} schema version {}",
+                        store.backend_name(),
+                        store.schema_version().unwrap_or(0),
+                    ),
+                ));
 
                 match store.count(RecordKind::Entity) {
                     Ok(count) => checks.push(Check::ok("stored entities", &count.to_string())),

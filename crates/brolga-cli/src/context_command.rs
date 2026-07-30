@@ -21,7 +21,7 @@ use brolga_graph::subject;
 use brolga_model::pack::DetailLevel;
 use brolga_model::{NodeRef, Timestamp};
 use brolga_storage::store::{Direction, EdgeQuery, Page};
-use brolga_storage::{StoreRead, sqlite::SqliteStore};
+use brolga_storage::{OpenedStore, StoreRead};
 
 use crate::cli::ContextArgs;
 use crate::exit::ExitCode;
@@ -168,7 +168,7 @@ pub(crate) fn context<Out: Write, Err: Write>(
 /// One acquisition for the whole pack: a pack assembled from several reads could describe a graph
 /// that never existed at any instant, which is not something a case should be enriched with.
 fn gather(
-    store: &mut SqliteStore,
+    store: &mut OpenedStore,
     observable: &brolga_model::Observable,
     args: &ContextArgs,
 ) -> Result<Gathered, String> {

@@ -120,7 +120,7 @@ pub use brolga_model::pack::{
 ///
 /// Returns [`ApiError::BadRequest`] if the subject cannot be resolved to an observable, or
 /// [`ApiError::Internal`] if the store cannot be read.
-pub async fn context<S: StoreRead>(
+pub async fn context<S: StoreRead + Send + 'static>(
     State(state): State<Arc<ApiState<S>>>,
     Json(request): Json<ContextRequest>,
 ) -> Result<Json<ContextPack>, ApiError> {
@@ -164,7 +164,7 @@ pub async fn context<S: StoreRead>(
     // a graph that never existed at any instant, which is precisely the kind of answer a case
     // should not be enriched with.
     let gathered = state
-        .read(|store| {
+        .read(move |store| {
             let claims = store.claims_about(&node, Page::first(budget))?;
             let edges = store.edges_at(
                 &EdgeQuery::at(node, Direction::Either),
@@ -191,6 +191,7 @@ pub async fn context<S: StoreRead>(
 
             Ok((claims, edges, sightings, entities, graph_version))
         })
+        .await
         .map_err(|error| from_read_failure(&error, &request_id))?;
 
     let (claims, edges, sightings, entities, graph_version) = gathered;

@@ -97,6 +97,10 @@ same typed filter — never SQL:
 brolga search --query 'kind = threat_actor and status = active'
 ```
 
+`--database` accepts a SQLite path (default) or, when built with `--features postgres`, a
+`postgres://` / `postgresql://` URL. Migration runs on open. See [STORAGE.md](STORAGE.md).
+
+
 
 The envelope field is `_collection`, not `kind`, because `kind` is a real field on an entity and an
 envelope that overwrote it would silently corrupt the value you filter on.

@@ -35,7 +35,7 @@ use brolga_graph::subject;
 use brolga_model::Timestamp;
 use brolga_model::pack::DetailLevel;
 use brolga_model::{NodeRef, Observable};
-use brolga_storage::sqlite::SqliteStore;
+use brolga_storage::OpenedStore;
 use brolga_storage::store::{Direction, EdgeQuery, Page};
 use brolga_storage::{RecordKind, StoreRead};
 use serde_json::{Value, json};
@@ -154,7 +154,7 @@ fn tools() -> Vec<Tool> {
 pub(crate) fn serve<R: BufRead, W: Write>(
     input: R,
     mut output: W,
-    store: &mut SqliteStore,
+    store: &mut OpenedStore,
 ) -> std::io::Result<()> {
     for line in input.lines() {
         let line = line?;
@@ -182,7 +182,7 @@ pub(crate) fn serve<R: BufRead, W: Write>(
 }
 
 /// Handle one request, returning the response to write, if any.
-fn handle(request: &Value, store: &mut SqliteStore) -> Option<Value> {
+fn handle(request: &Value, store: &mut OpenedStore) -> Option<Value> {
     let id = request.get("id").cloned();
     let method = request.get("method").and_then(Value::as_str).unwrap_or("");
 
@@ -223,7 +223,7 @@ fn handle(request: &Value, store: &mut SqliteStore) -> Option<Value> {
 }
 
 /// Dispatch a tool call.
-fn call_tool(id: &Value, request: &Value, store: &mut SqliteStore) -> Value {
+fn call_tool(id: &Value, request: &Value, store: &mut OpenedStore) -> Value {
     let params = request.get("params").unwrap_or(&Value::Null);
     let Some(name) = params.get("name").and_then(Value::as_str) else {
         return error_response(id, codes::INVALID_PARAMS, "no tool name");
@@ -257,7 +257,7 @@ fn call_tool(id: &Value, request: &Value, store: &mut SqliteStore) -> Value {
 }
 
 /// The `brolga_context` tool.
-fn context_tool(arguments: &Value, store: &mut SqliteStore) -> Result<Value, (i64, String)> {
+fn context_tool(arguments: &Value, store: &mut OpenedStore) -> Result<Value, (i64, String)> {
     let kind = arguments
         .get("kind")
         .and_then(Value::as_str)
@@ -324,7 +324,7 @@ fn context_tool(arguments: &Value, store: &mut SqliteStore) -> Result<Value, (i6
 }
 
 /// The `brolga_neighbours` tool.
-fn neighbours_tool(arguments: &Value, store: &mut SqliteStore) -> Result<Value, (i64, String)> {
+fn neighbours_tool(arguments: &Value, store: &mut OpenedStore) -> Result<Value, (i64, String)> {
     let id = arguments
         .get("id")
         .and_then(Value::as_str)
@@ -370,7 +370,7 @@ fn neighbours_tool(arguments: &Value, store: &mut SqliteStore) -> Result<Value, 
 }
 
 /// The `brolga_stats` tool.
-fn stats_tool(store: &mut SqliteStore) -> Result<Value, (i64, String)> {
+fn stats_tool(store: &mut OpenedStore) -> Result<Value, (i64, String)> {
     let count = |kind: RecordKind| store.count(kind).unwrap_or(0);
     Ok(json!({
         "schema_version": TOOL_SCHEMA_VERSION,
@@ -383,7 +383,7 @@ fn stats_tool(store: &mut SqliteStore) -> Result<Value, (i64, String)> {
 
 /// Read what a pack is assembled from.
 fn gather(
-    store: &mut SqliteStore,
+    store: &mut OpenedStore,
     observable: &Observable,
     limit: u64,
 ) -> Result<Gathered, String> {
@@ -444,12 +444,12 @@ fn error_response(id: &Value, code: i64, message: &str) -> Value {
 mod tests {
     use super::*;
 
-    fn store() -> SqliteStore {
+    fn store() -> OpenedStore {
         use brolga_storage::IntelligenceStore;
-
-        let mut store = SqliteStore::open_in_memory().unwrap();
-        store.migrate().unwrap();
-        store
+        use brolga_storage::sqlite::SqliteStore;
+        let mut inner = SqliteStore::open_in_memory().unwrap();
+        inner.migrate().unwrap();
+        OpenedStore::Sqlite(inner)
     }
 
     fn exchange(requests: &[Value]) -> Vec<Value> {

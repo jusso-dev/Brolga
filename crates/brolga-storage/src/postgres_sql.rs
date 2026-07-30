@@ -12,11 +12,14 @@ pub fn sqlite_migration_to_postgres(sql: &str) -> String {
     out = out.replace(") STRICT\n", ");\n");
     // Blob type.
     out = out.replace("BLOB", "BYTEA");
-    // Auto-increment primary keys.
+    // Auto-increment primary keys (must run before the general INTEGER rewrite).
     out = out.replace(
         "INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT",
         "BIGSERIAL PRIMARY KEY",
     );
+    // SQLite INTEGER is 64-bit; PostgreSQL INTEGER is 32-bit. Use BIGINT so
+    // rust-postgres i64 binds/reads match (i64 only accepts/produces INT8).
+    out = out.replace("INTEGER", "BIGINT");
     // SQLite datetime helper used when recording applied migrations.
     out = out.replace("datetime('now')", "(NOW() AT TIME ZONE 'UTC')");
     out
@@ -50,6 +53,23 @@ mod tests {
                 "migration {} still has AUTOINCREMENT",
                 migration.id
             );
+            // Bare INTEGER must not remain (would be 32-bit and break i64 binds).
+            assert!(
+                !pg.split_whitespace().any(|t| t == "INTEGER"),
+                "migration {} still has bare INTEGER",
+                migration.id
+            );
         }
+    }
+
+    #[test]
+    fn sqlite_integer_becomes_bigint() {
+        let pg = sqlite_migration_to_postgres(
+            "CREATE TABLE t (n INTEGER NOT NULL, id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT) STRICT;",
+        );
+        assert!(pg.contains("BIGINT"));
+        assert!(pg.contains("BIGSERIAL"));
+        assert!(!pg.contains("STRICT"));
+        assert!(!pg.contains("AUTOINCREMENT"));
     }
 }

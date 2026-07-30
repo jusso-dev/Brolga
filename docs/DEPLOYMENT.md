@@ -338,7 +338,9 @@ exists in the current release, and no container configuration will make it appea
   script written against a later Brolga fails with a message naming the milestone rather than an
   unhelpful "unrecognised subcommand". It writes nothing to stdout.
 - **No WebAssembly plugin host.** Manifest validate/explain and the SDK/WIT ABI exist; execution is `v0.7.0` [#48](https://github.com/jusso-dev/Brolga/issues/48). Declarative mappings are available.
-- **No PostgreSQL.** SQLite is the only backend. Server mode is `v1.0.0`.
+- **PostgreSQL is optional.** Default images stay SQLite-only. Build with
+  `BROLGA_FEATURES=postgres` (see `Dockerfile`) and pass
+  `--database 'postgres://…'` / a libpq URL for server mode. See [STORAGE.md](STORAGE.md).
 - **No web interface.** None is planned for the initial release.
 - **No metrics endpoint, no Prometheus exporter, no structured audit sink.** Diagnostics go to
   stderr, and `--log-format json` gives you one object per line for a log collector to pick up.

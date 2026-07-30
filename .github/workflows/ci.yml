@@ -113,6 +113,41 @@ jobs:
       - run: cargo check --locked --workspace --all-features
 
   # ---------------------------------------------------------------------------------------------
+  # PostgreSQL store contract (#55 / ADR 0011). Runs only on Linux with a service container so
+  # default builds stay free of a live database dependency.
+  # ---------------------------------------------------------------------------------------------
+  postgres-contract:
+    name: PostgreSQL store contract
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: brolga
+          POSTGRES_PASSWORD: brolga-ci
+          POSTGRES_DB: brolga
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U brolga -d brolga"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      BROLGA_POSTGRES_URL: postgres://brolga:brolga-ci@127.0.0.1:5432/brolga
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          key: postgres-contract
+      - name: Run PostgreSQL contract tests
+        # Shared database: migrate/write races under parallel default harness.
+        run: cargo test --locked -p brolga-storage --features postgres --test postgres_contract -- --test-threads=1
+
+  # ---------------------------------------------------------------------------------------------
   # Documentation must build without warnings, because a broken intra-doc link is a broken
   # cross-reference in the only navigable form of the public API.
   # ---------------------------------------------------------------------------------------------

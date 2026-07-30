@@ -364,6 +364,7 @@ fn cursor_from_row(row: &postgres::Row) -> ConnectorCursor {
 
 impl StoreRead for PostgresStore {
     fn schema_version(&self) -> Result<u32> {
+        // One lock for both queries — std::sync::Mutex is not reentrant.
         let mut client = self.lock()?;
         let exists = client
             .query_opt(
@@ -376,7 +377,6 @@ impl StoreRead for PostgresStore {
         if !exists {
             return Ok(0);
         }
-        let mut client = self.lock()?;
         let row = client
             .query_one(
                 "SELECT COALESCE(MAX(id), 0)::int FROM brolga_schema_migrations",

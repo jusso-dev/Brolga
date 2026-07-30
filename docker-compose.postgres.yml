@@ -1,0 +1,75 @@
+# Optional overlay: PostgreSQL-backed Brolga (server mode / #55).
+#
+#   export BROLGA_POSTGRES_PASSWORD=… BROLGA_API_TOKEN=…
+#   docker compose -f docker-compose.yml -f docker-compose.postgres.yml \
+#     --profile serve --profile postgres up -d --build
+#
+# Image is built with BROLGA_FEATURES=postgres. API opens postgres via --database URL.
+name: brolga
+
+services:
+  postgres:
+    profiles: ["serve", "postgres"]
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: brolga
+      POSTGRES_PASSWORD: ${BROLGA_POSTGRES_PASSWORD:?set BROLGA_POSTGRES_PASSWORD}
+      POSTGRES_DB: brolga
+    volumes:
+      - brolga-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U brolga -d brolga"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    mem_limit: 512m
+    pids_limit: 128
+    # Optional host publish for contract tests from a workstation:
+    # ports: ["5433:5432"]
+
+  brolga-api:
+    profiles: ["serve"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BROLGA_FEATURES: postgres
+    image: brolga:local-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      [
+        "serve",
+        "--bind",
+        "0.0.0.0:8787",
+        "--database",
+        "postgres://brolga:${BROLGA_POSTGRES_PASSWORD}@postgres:5432/brolga",
+      ]
+    environment:
+      BROLGA_API_TOKEN: ${BROLGA_API_TOKEN:?set BROLGA_API_TOKEN}
+
+  brolga-pg-search:
+    profiles: ["postgres"]
+    image: brolga:local-postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+    entrypoint: ["/usr/local/bin/brolga"]
+    command:
+      [
+        "search",
+        "--database",
+        "postgres://brolga:${BROLGA_POSTGRES_PASSWORD}@postgres:5432/brolga",
+        "--limit",
+        "5",
+        "--output",
+        "json",
+      ]
+    mem_limit: 1g
+    pids_limit: 128
+
+volumes:
+  brolga-pg-data:

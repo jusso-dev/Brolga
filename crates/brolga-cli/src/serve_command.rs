@@ -17,6 +17,18 @@ use crate::output::Streams;
 /// every other user on the host can read it, and in the shell history of whoever typed it.
 pub(crate) const TOKEN_VARIABLE: &str = "BROLGA_API_TOKEN";
 
+/// Redact userinfo in postgres URLs so serve startup notes never print passwords.
+fn redact_database_label(spec: &str) -> String {
+    if let Some(at) = spec.find('@')
+        && let Some(scheme) = spec.find("://")
+    {
+        let head = spec.get(..=scheme + 2).unwrap_or("postgres://");
+        let tail = spec.get(at..).unwrap_or("@");
+        return format!("{head}***{tail}");
+    }
+    spec.to_owned()
+}
+
 /// Serve the API until the process is asked to stop.
 pub(crate) fn serve<Out: Write, Err: Write>(
     args: &ServeArgs,
@@ -86,9 +98,9 @@ pub(crate) fn serve<Out: Write, Err: Write>(
         }
     };
 
+    let database_label = redact_database_label(&args.database.display().to_string());
     let _ = streams.note(&format!(
-        "serving {} on http://{address}/api/v1 ({})",
-        args.database.display(),
+        "serving {database_label} on http://{address}/api/v1 ({})",
         if authenticated {
             "bearer token required"
         } else {

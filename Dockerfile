@@ -33,9 +33,15 @@ COPY . .
 # adds a crate and forgets. `--locked` refuses to update `Cargo.lock`, so the image is built from
 # the dependency versions the repository has actually tested. The binary is copied out of the
 # cache mount in the same layer, because the mount does not survive the instruction.
+# Optional features (e.g. `postgres`) for server-mode images. Default stays lean (ADR 0001 §3).
+ARG BROLGA_FEATURES=
 RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/src/brolga/target,sharing=locked \
-    cargo build --locked --release --package brolga-cli \
+    if [ -n "$BROLGA_FEATURES" ]; then \
+      cargo build --locked --release --package brolga-cli --features "$BROLGA_FEATURES"; \
+    else \
+      cargo build --locked --release --package brolga-cli; \
+    fi \
     && cp target/release/brolga /usr/local/bin/brolga
 
 # alpine:3.22

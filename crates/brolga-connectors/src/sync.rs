@@ -31,7 +31,7 @@ use brolga_model::Timestamp;
 use brolga_model::provenance::{MediaType, SourceOrigin};
 use brolga_model::text::ShortText;
 use brolga_security::CancellationToken;
-use brolga_storage::{ConnectorCursor, CursorStatus, IntelligenceStore, SqliteStore, StoreRead};
+use brolga_storage::{ConnectorCursor, CursorStatus, IntelligenceStore};
 
 use crate::error::ConnectorError;
 use crate::misp::{MISP_CONNECTOR, MispClient, MispFeed, MispInstance};
@@ -160,7 +160,7 @@ impl<'a> FeedRef<'a> {
 /// Does not panic. Every fallible conversion is handled.
 pub fn sync_collection(
     client: &TaxiiClient<'_>,
-    store: &mut SqliteStore,
+    store: &mut impl IntelligenceStore,
     pipeline: &Pipeline,
     feed: FeedRef<'_>,
     now: Timestamp,
@@ -337,7 +337,7 @@ pub fn sync_collection(
 
 /// Write the cursor, turning a storage failure into a connector error.
 fn persist(
-    store: &mut SqliteStore,
+    store: &mut impl IntelligenceStore,
     cursor: &ConnectorCursor,
     url: &str,
 ) -> Result<(), ConnectorError> {
@@ -408,7 +408,7 @@ impl<'a> MispTarget<'a> {
 /// Returns the first failure. The cursor is left wherever the last successfully stored page put it.
 pub fn sync_misp_feed(
     client: &MispClient<'_>,
-    store: &mut SqliteStore,
+    store: &mut impl IntelligenceStore,
     pipeline: &Pipeline,
     target: MispTarget<'_>,
     now: Timestamp,
@@ -581,7 +581,7 @@ pub fn sync_misp_feed(
 /// Returns the first failure. The cursor is left wherever the last successfully stored page put it.
 pub fn sync_opencti(
     client: &OpenCtiClient<'_>,
-    store: &mut SqliteStore,
+    store: &mut impl IntelligenceStore,
     pipeline: &Pipeline,
     instance: &OpenCtiInstance,
     now: Timestamp,
