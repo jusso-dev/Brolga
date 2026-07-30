@@ -1,17 +1,14 @@
-//! `brolga plugin validate` and `brolga plugin explain`.
+//! `brolga plugin validate`, `explain`, and (with `--features plugins`) `run`.
 //!
-//! # Manifests only — no host
-//!
-//! [#46](https://github.com/jusso-dev/Brolga/issues/46) ships the SDK and ABI. The WebAssembly host
-//! is [#48](https://github.com/jusso-dev/Brolga/issues/48). These commands answer "would this
-//! manifest load?" and "what does it claim?", without executing a component.
+//! Manifest commands always use the SDK. Execution requires the off-by-default host feature
+//! (ADR 0001 §3, ADR 0009).
 
 use std::io::Write;
 
 use brolga_plugin_sdk::abi::PLUGIN_ABI_VERSION;
 use brolga_plugin_sdk::manifest::PluginManifest;
 
-use crate::cli::{PluginCommand, PluginFileArgs};
+use crate::cli::{PluginCommand, PluginFileArgs, PluginRunArgs};
 use crate::exit::ExitCode;
 use crate::output::{OutputMode, Streams};
 
@@ -23,6 +20,7 @@ pub(crate) fn plugin<Out: Write, Err: Write>(
     match command {
         PluginCommand::Validate(args) => validate(args, streams),
         PluginCommand::Explain(args) => explain(args, streams),
+        PluginCommand::Run(args) => run(args, streams),
     }
 }
 
@@ -122,4 +120,95 @@ fn explain<Out: Write, Err: Write>(
         }));
     }
     ExitCode::Success
+}
+
+fn run<Out: Write, Err: Write>(args: &PluginRunArgs, streams: &mut Streams<Out, Err>) -> ExitCode {
+    #[cfg(not(feature = "plugins"))]
+    {
+        let _ = args;
+        let _ = streams.problem(
+            "`brolga plugin run` requires a binary built with `--features plugins` (ADR 0009). \
+             Manifest validate/explain work without it.",
+        );
+        ExitCode::NotImplemented
+    }
+
+    #[cfg(feature = "plugins")]
+    {
+        run_with_host(args, streams)
+    }
+}
+
+#[cfg(feature = "plugins")]
+fn run_with_host<Out: Write, Err: Write>(
+    args: &PluginRunArgs,
+    streams: &mut Streams<Out, Err>,
+) -> ExitCode {
+    use brolga_plugin_host::grant::GrantSet;
+    use brolga_plugin_host::limits::PluginLimits;
+    use brolga_plugin_host::package::load_package_dir;
+    use brolga_plugin_host::runtime::PluginEngine;
+
+    let request = match &args.request {
+        Some(path) => match std::fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let _ = streams.problem(&format!("cannot read {}: {error}", path.display()));
+                return ExitCode::Io;
+            }
+        },
+        None => b"{}".to_vec(),
+    };
+
+    let package =
+        match load_package_dir(&args.package, &GrantSet::empty(), PluginLimits::defaults()) {
+            Ok(package) => package,
+            Err(error) => {
+                let _ = streams.problem(&error.to_string());
+                return ExitCode::ConfigInvalid;
+            }
+        };
+
+    let engine = match PluginEngine::new(PluginLimits::defaults()) {
+        Ok(engine) => engine,
+        Err(error) => {
+            let _ = streams.problem(&error.to_string());
+            return ExitCode::Failure;
+        }
+    };
+
+    match engine.invoke(&package, &args.extension, &args.contract, &request) {
+        Ok(result) => {
+            if streams.mode() == OutputMode::Human {
+                match std::str::from_utf8(&result.body) {
+                    Ok(text) => {
+                        let _ = streams.result_line(text);
+                    }
+                    Err(_) => {
+                        let _ = streams.result_line(&format!(
+                            "binary response: {} bytes (fuel remaining: {:?})",
+                            result.body.len(),
+                            result.fuel_remaining
+                        ));
+                    }
+                }
+            } else {
+                let body_json: serde_json::Value = serde_json::from_slice(&result.body)
+                    .unwrap_or_else(|_| serde_json::json!({ "raw_len": result.body.len() }));
+                let _ = streams.result_json(&serde_json::json!({
+                    "plugin": package.identity.name,
+                    "version": package.identity.version,
+                    "extension": args.extension,
+                    "contract": args.contract,
+                    "fuel_remaining": result.fuel_remaining,
+                    "body": body_json,
+                }));
+            }
+            ExitCode::Success
+        }
+        Err(error) => {
+            let _ = streams.problem(&error.to_string());
+            ExitCode::Failure
+        }
+    }
 }

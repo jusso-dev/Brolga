@@ -567,8 +567,7 @@ the operator's file was not, and a script has to be able to tell the two apart.
 ## `brolga plugin`
 
 Validate and explain a **plugin manifest** for the `brolga-plugin-sdk` / WIT ABI
-(`brolga:plugin@0.1.0`). This does **not** execute WebAssembly — the host is a later
-`v0.7.0` issue. It answers whether a third-party document would load, and what it claims.
+(`brolga:plugin@0.1.0`). Manifest commands work in the default binary.
 
 ```bash
 brolga plugin validate examples/plugins/parser-manifest.yml
@@ -577,6 +576,18 @@ brolga plugin explain  examples/plugins/parser-manifest.yml
 
 `explain` always lists fixed refusals (no native `dlopen`, no FS/network without scoped grants,
 policy extensions are advisory only, plugin output is untrusted). An invalid manifest exits `3`.
+
+### Execution (`--features plugins`)
+
+WebAssembly execution is off by default (ADR 0001 §3). Build with the feature to enable the host:
+
+```bash
+cargo build -p brolga-cli --features plugins
+brolga plugin run examples/plugins/echo --extension parser --contract 1.0
+```
+
+The package directory needs `manifest.yml` and usually `component.wasm`. The sandbox has empty host
+imports (no WASI), fuel, and wall-clock caps. Guest errors print as failure exit codes.
 
 ### A mapping is data, not code
 
