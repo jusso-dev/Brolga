@@ -207,6 +207,10 @@ pub(crate) enum Command {
     #[command(subcommand)]
     Mapping(MappingCommand),
 
+    /// Validate and explain a plugin manifest (SDK / WIT ABI; no host execution yet).
+    #[command(subcommand)]
+    Plugin(PluginCommand),
+
     /// List the export formats this build ships.
     #[command(subcommand)]
     Export(ExportCommand),
@@ -242,6 +246,28 @@ pub(crate) enum MappingCommand {
 #[derive(Debug, Args)]
 pub(crate) struct MappingFileArgs {
     /// The mapping file. YAML or JSON.
+    pub(crate) path: PathBuf,
+}
+
+/// What to do with a plugin manifest.
+#[derive(Debug, Subcommand)]
+pub(crate) enum PluginCommand {
+    /// Load a plugin manifest and report every problem found.
+    ///
+    /// Exits zero only if the host would accept the document for loading. Does not execute any
+    /// WebAssembly — that is the plugin host milestone.
+    Validate(PluginFileArgs),
+
+    /// Show what a manifest declares, including fixed security refusals.
+    ///
+    /// The refusals are the half that matters when the plugin came from somewhere else.
+    Explain(PluginFileArgs),
+}
+
+/// A plugin manifest to read.
+#[derive(Debug, Args)]
+pub(crate) struct PluginFileArgs {
+    /// The manifest file. YAML or JSON.
     pub(crate) path: PathBuf,
 }
 
@@ -739,6 +765,7 @@ impl Command {
             Self::Completion(_) => "completion",
             Self::Context(_) => "context",
             Self::Mapping(_) => "mapping",
+            Self::Plugin(_) => "plugin",
             Self::Export(_) => "export",
         }
     }

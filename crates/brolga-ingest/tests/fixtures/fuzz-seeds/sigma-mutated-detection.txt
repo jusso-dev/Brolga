@@ -1,0 +1,10 @@
+detection:
+  selection:
+    A|contains: x
+  conditionbrolga.xml.openioc: selection
+logsource:
+  electiLEE4vLEE4v:-Faddr::-on:
+    AycontFaddr:val2.0|v:v4-addr:val2.|pain|1|s: x
+  condition: *election
+logosurce:
+  prproduct: ep

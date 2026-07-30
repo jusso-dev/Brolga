@@ -114,7 +114,8 @@ so this section cannot drift from the code without a test failing.
 | Policy — TLP/PAP, capabilities, redistribution | working |
 | Interfaces — CLI, HTTP API with OpenAPI, MCP over stdio | working |
 | Expansion to L4/L5 | handles are issued; **the resolver endpoint is not built** |
-| PostgreSQL, plugins, exporters, benchmarks | **not supported** |
+| Plugin SDK / WIT ABI / manifest validate | working (no WebAssembly host yet — execution is later in `v0.7.0`) |
+| PostgreSQL, WebAssembly plugin host, benchmarks | **not supported** |
 
 The middle two rows are the ones worth reading twice. Brolga will tell you what it does not know;
 it should also tell you what it does not yet do.

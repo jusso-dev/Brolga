@@ -13,6 +13,7 @@ members = [
     "crates/brolga-graph",
     "crates/brolga-ingest",
     "crates/brolga-model",
+    "crates/brolga-plugin-sdk",
     "crates/brolga-security",
     "crates/brolga-storage",
 ]

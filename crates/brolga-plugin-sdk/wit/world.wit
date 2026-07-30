@@ -1,0 +1,59 @@
+// Brolga plugin ABI — ADR 0001 §6, ADR 0008, issue #46.
+//
+// Package version is the ABI version. Additive interface growth stays within a major;
+// changing an existing import or export is a major bump.
+//
+// Default host imports are empty: no filesystem, no network, no clocks, no entropy.
+// Capabilities declared in the plugin manifest are mapped to imports by the host (#48),
+// never implied by this world.
+
+package brolga:plugin@0.1.0;
+
+/// Structured failure returned across the ABI. Codes are stable; messages are diagnostic.
+interface types {
+    record plugin-error {
+        /// Stable machine code, for example `unsupported-contract` or `limit-exceeded`.
+        code: string,
+        /// Human-readable detail. Must not contain secrets or host paths the plugin was not given.
+        message: string,
+    }
+}
+
+/// Manifest export: every component answers who it is without side effects.
+interface manifest {
+    use types.{plugin-error};
+
+    /// Return the plugin manifest as UTF-8 JSON (`brolga.plugin.manifest/1.0`).
+    ///
+    /// The host validates the document before any `invoke.call`. A component that cannot
+    /// produce a valid manifest is refused rather than run on a guess.
+    get: func() -> result<string, plugin-error>;
+}
+
+/// The single portable call path. Extension-specific shapes live in the JSON body.
+interface invoke {
+    use types.{plugin-error};
+
+    /// Call one extension point with a deterministic JSON request body.
+    ///
+    /// - `extension` is the snake_case extension-point name (parser, exporter, …).
+    /// - `contract-version` is that point's `major.minor` contract tag.
+    /// - `request` is UTF-8 JSON whose schema is defined by the contract version.
+    ///
+    /// Success bytes are UTF-8 JSON. Failure is a structured `plugin-error`.
+    /// Unknown extension names and unsupported contract majors must fail clearly.
+    call: func(
+        extension: string,
+        contract-version: string,
+        request: list<u8>,
+    ) -> result<list<u8>, plugin-error>;
+}
+
+/// A Brolga plugin component.
+///
+/// No imports: pure compute unless the host (under operator policy) wires capability-backed
+/// imports in a future world revision. This empty import set is the default security property.
+world plugin {
+    export manifest;
+    export invoke;
+}
