@@ -1,0 +1,17 @@
+# Pure-compute exporter package. Policy gate stays on the host (ADR 0007).
+# Component from plugins/echo-guest. See docs/PLUGIN-DEVELOPMENT.md.
+schema_version: brolga.plugin.manifest/1.0
+name: example.exporter.acme-csv
+version: 1.0.0
+api: "0.1.0"
+extension_points:
+  - kind: exporter
+    contract_version: "1.0"
+    formats:
+      - text/csv
+      - acme-csv
+    outputs:
+      - acme-csv
+capabilities: []
+component:
+  path: component.wasm

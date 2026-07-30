@@ -1,4 +1,6 @@
 # Example exporter plugin manifest — policy gate stays on the host (ADR 0007).
+# Runnable package: examples/plugins/exporter/ (same fields + component.wasm).
+# Exporter response must declare lossiness (lossless | partially_lossless | compressed | derived).
 schema_version: brolga.plugin.manifest/1.0
 name: example.exporter.acme-csv
 version: 1.0.0

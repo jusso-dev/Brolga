@@ -21,6 +21,8 @@ workspace = true
 default = []
 # Off-by-default WebAssembly plugin host (ADR 0001 §3, ADR 0009).
 plugins = ["dep:brolga-plugin-host", "brolga-plugin-host/runtime"]
+# Off-by-default language-model proposals (ADR 0001 §3, ADR 0010).
+llm = ["dep:brolga-llm", "brolga-llm/http"]
 
 [dependencies]
 brolga-api = { version = "0.1.0", path = "../brolga-api" }
@@ -29,6 +31,7 @@ brolga-export = { version = "0.1.0", path = "../brolga-export" }
 brolga-graph = { version = "0.1.0", path = "../brolga-graph" }
 brolga-connectors = { version = "0.1.0", path = "../brolga-connectors" }
 brolga-ingest = { version = "0.1.0", path = "../brolga-ingest" }
+brolga-llm = { version = "0.1.0", path = "../brolga-llm", optional = true }
 brolga-model = { version = "0.1.0", path = "../brolga-model" }
 brolga-plugin-host = { version = "0.1.0", path = "../brolga-plugin-host", optional = true }
 brolga-plugin-sdk = { version = "0.1.0", path = "../brolga-plugin-sdk" }

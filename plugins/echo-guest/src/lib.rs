@@ -1,7 +1,9 @@
-//! Pure-compute echo plugin for host integration tests.
+//! Pure-compute fixture plugin for host integration tests (#48 / #50).
 //!
-//! - `manifest.get` returns a fixed valid manifest JSON.
-//! - `invoke.call` for `parser` / `1.0` echoes a tiny parse response; other extensions error.
+//! - `manifest.get` returns a fixed valid manifest JSON (parser + exporter points).
+//! - `invoke.call` for `parser` / `1.0` echoes a tiny parse response.
+//! - `invoke.call` for `exporter` / `1.0` returns a tiny CSV with declared lossiness.
+//! - Unknown extension names and unsupported contract versions fail clearly.
 //!
 //! No host imports. No filesystem, network, clock, or entropy.
 
@@ -18,7 +20,7 @@ struct Component;
 
 const MANIFEST_JSON: &str = r#"{
   "schema_version": "brolga.plugin.manifest/1.0",
-  "name": "example.parser.echo",
+  "name": "example.fixture.echo",
   "version": "1.0.0",
   "api": "0.1.0",
   "extension_points": [
@@ -27,6 +29,12 @@ const MANIFEST_JSON: &str = r#"{
       "contract_version": "1.0",
       "formats": ["application/x-echo"],
       "outputs": ["claim"]
+    },
+    {
+      "kind": "exporter",
+      "contract_version": "1.0",
+      "formats": ["text/csv", "acme-csv"],
+      "outputs": ["acme-csv"]
     }
   ],
   "capabilities": []
@@ -44,12 +52,6 @@ impl InvokeGuest for Component {
         contract_version: String,
         request: Vec<u8>,
     ) -> Result<Vec<u8>, PluginError> {
-        if extension != "parser" {
-            return Err(PluginError {
-                code: "unknown-extension".to_owned(),
-                message: format!("echo guest only implements parser, got `{extension}`"),
-            });
-        }
         if contract_version != "1.0" && contract_version != "1.0.0" {
             return Err(PluginError {
                 code: "unsupported-contract".to_owned(),
@@ -62,11 +64,28 @@ impl InvokeGuest for Component {
                 message: "request too large".to_owned(),
             });
         }
-        let body = format!(
-            r#"{{"records":[],"echo_bytes":{},"note":"pure-compute"}}"#,
-            request.len()
-        );
-        Ok(body.into_bytes())
+        match extension.as_str() {
+            "parser" => {
+                // Host retains original bytes and transformations outside the guest.
+                // Plugin only returns records the host will re-validate against brolga-model.
+                let body = format!(
+                    r#"{{"records":[],"echo_bytes":{},"note":"pure-compute; host preserves originals"}}"#,
+                    request.len()
+                );
+                Ok(body.into_bytes())
+            }
+            "exporter" => {
+                // Host already ran the policy gate (ADR 0007) before building this request.
+                // Guest only formats bytes and must declare lossiness.
+                // body is ByteBuf = sequence of u8: "id,value\n" = [105,100,44,118,97,108,117,101,10]
+                let body = r#"{"body":[105,100,44,118,97,108,117,101,10],"media_type":"text/csv","lossiness":"derived","declared_losses":["CSV drops provenance, markings, and graph structure; host policy already cleared the pack"]}"#;
+                Ok(body.as_bytes().to_vec())
+            }
+            other => Err(PluginError {
+                code: "unknown-extension".to_owned(),
+                message: format!("echo guest implements parser and exporter, got `{other}`"),
+            }),
+        }
     }
 }
 

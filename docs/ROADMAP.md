@@ -218,7 +218,7 @@ Exit gate: mock-server integration tests prove correct incremental retrieval, fa
 
 Add stable plugin SDK, declarative mappings, WIT ABI, capability-limited WebAssembly host, optional LLM proposal interface, and plugin examples.
 
-Mappings ([#47](https://github.com/jusso-dev/Brolga/issues/47)) and plugin SDK/WIT ([#46](https://github.com/jusso-dev/Brolga/issues/46)) are done. WebAssembly host ([#48](https://github.com/jusso-dev/Brolga/issues/48)): package load, grants, limits, Wasmtime sandbox, WIT `invoke.call`, echo fixture, and `brolga plugin run` (`--features plugins`) land; remaining work is broader fixture set / adversarial guests and pipeline wiring.
+Mappings ([#47](https://github.com/jusso-dev/Brolga/issues/47)), plugin SDK/WIT ([#46](https://github.com/jusso-dev/Brolga/issues/46)), WebAssembly host ([#48](https://github.com/jusso-dev/Brolga/issues/48)), optional LLM proposals ([#49](https://github.com/jusso-dev/Brolga/issues/49)), and plugin examples/guide ([#50](https://github.com/jusso-dev/Brolga/issues/50)) land: package load, grants, limits, Wasmtime sandbox, WIT `invoke.call`, parser/exporter fixtures, `brolga plugin run` (`--features plugins`), `brolga-llm` + `brolga llm` (`--features llm`), and `docs/PLUGIN-DEVELOPMENT.md`. Residual non-blocking work: broader adversarial guests and full pipeline wiring of plugins into ingest/export paths.
 
 Exit gate: plugins run without filesystem or network access by default, remain bounded, declare compatibility and capabilities, and cannot bypass policy.
 

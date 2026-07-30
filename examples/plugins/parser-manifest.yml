@@ -1,5 +1,6 @@
 # Example parser plugin manifest — validated by tests and `brolga plugin validate`.
-# No capabilities: pure compute. No component bytes yet (#48 host / #50 examples).
+# No capabilities: pure compute. Runnable package: examples/plugins/echo/.
+# Host preserves original bytes and transformations; guest emits records only.
 schema_version: brolga.plugin.manifest/1.0
 name: example.parser.acme-feed
 version: 1.0.0
