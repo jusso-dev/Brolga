@@ -1,23 +1,33 @@
 # Deploying Brolga
 
 This is how to run Brolga on your own infrastructure, in a container, with the database on a
-volume you control. It is written for a homelab: one host, one operator, no orchestrator.
+volume you control. Written for a homelab: one host, one operator, no orchestrator.
 
-Read [What is not reachable](#what-is-not-reachable) before you plan anything around this. Brolga
-is early, and the shape of what it can and cannot do is unusual enough to be worth knowing up
-front.
+## What this product is
+
+Brolga is a **STIX normalizer + local store + context API**. One image, two shapes:
+
+| Shape | Compose service | Role |
+| --- | --- | --- |
+| **CLI** | `brolga` | `docker compose run --rm brolga <cmd>` — ingest, fetch, query |
+| **HTTP API** | `brolga-api` (profile `serve`) | Long-running read-only server for other products |
+
+Same SQLite volume. CLI writes; API reads (and needs WAL write access).
+
+**Primary TI source:** an **OpenCTI instance you host yourself**. Brolga does **not** ship or start
+OpenCTI. Pull with `brolga fetch opencti` (needs network + `BROLGA_OPENCTI_TOKEN`). Secondary:
+TAXII collections and local STIX / flat / Sigma files.
+
+**Not in this product:** MISP, plugins, LLM, MCP, web UI, scheduled polling.
 
 ## What this deploys
 
-A single image containing the `brolga` binary and nothing else that matters. There is no server,
-no scheduler, and no background process: every Brolga command opens the database, does one thing,
-writes its result to stdout, and exits. A container that "is running Brolga" is a container part
-way through one command.
-
-That is why `docker compose up` is not the normal way to use this. The normal way is:
+A single image containing the `brolga` binary. Default CLI service has **no network** and exits after
+one command. The API service is a daemon behind `docker compose --profile serve`.
 
 ```bash
-docker compose run --rm brolga <command>
+docker compose run --rm brolga <command>          # one-shot CLI
+docker compose --profile serve up -d brolga-api   # HTTP server
 ```
 
 ## Prerequisites
@@ -143,70 +153,28 @@ copy it in — see [Reading and writing the volume](#reading-and-writing-the-vol
 
 ## Ingesting a file
 
-Brolga reads STIX 2.0 and 2.1 and ATT&CK bundles, STIX bundles,
-Sigma rules, YARA rules, OpenIOC definitions, IODEF incident documents, CEF/LEEF/syslog telemetry,
-and CSV/TSV/JSON/NDJSON/plain-text indicator lists. It also reads vulnerability and software
-intelligence: OSV records, NVD JSON in both the 2.0 API and retired 1.1 feed shapes, CSAF 2.0 and
-CVRF 1.2 vendor advisories, the CISA KEV catalogue, CycloneDX and SPDX JSON bills of materials, and
-SARIF static-analysis results. Format is detected per file from its contents,
-so a mixed batch is fine and a mislabelled extension does not mislead it.
+Brolga accepts:
 
-A vulnerability is keyed on its CVE wherever one is named — including when it is named only in an
-advisory's alias list — so the same flaw published as a GHSA record, an NVD entry, and a KEV listing
-is one entity with all three sources' claims on it. A package is keyed on its package URL, so a
-component named by an SBOM and the same component named by an advisory meet.
+| Input | How |
+| --- | --- |
+| **OpenCTI** | `brolga fetch opencti https://…` (GraphQL → `toStix`) |
+| **TAXII 2.0/2.1** | `brolga fetch taxii https://…` |
+| **STIX 2.0/2.1** files | `brolga ingest bundle.json` |
+| Flat feeds | CSV / TSV / JSON / NDJSON / plain-text indicators |
+| Sigma rules | Stored as `detection_rule` entities — **never executed** |
+| Custom shapes | `brolga ingest … --mapping mapping.yml` |
 
-Two things Brolga deliberately does not do with this data. It does not compare versions: an affected
-range is stored as published, and deciding whether an installed version falls inside it needs a
-per-ecosystem comparator that Brolga does not have. And a CISA KEV listing is recorded as *dated
-evidence from a named catalogue* — never as a disposition, and never as an exploitation relationship —
-because KEV membership means CISA saw exploitation in the wild on a date, not that every deployment
-of the affected product is exploitable now.
+Format is detected per file. Default mode is **strict** (any unreadable record fails the batch).
+`--mode permissive` keeps what parsed and quarantines the rest.
 
-Detection content — Sigma, YARA, OpenIOC, and SARIF analysis rules — becomes `detection_rule` entities. Brolga **stores rules
-and never runs them**: no condition is evaluated, no string is matched, no query is translated. A
-rule's detection logic is read only where it names a whole value under plain equality, and every
-field that was not read is recorded so `brolga show` can say why a rule contributed no observables.
-
-XML documents carrying a `<!DOCTYPE>` are refused outright rather than parsed with entity expansion
-turned off. A DTD is what entity-expansion and external-entity attacks need, and no legitimate
-OpenIOC, IODEF, or CVRF document has one.
-
-### A format Brolga has no parser for
-
-`brolga ingest <file> --mapping <mapping.yml>` reads a structured format through a declarative
-mapping. A mapping is data rather than code: paths that select values, and transforms from a closed
-list of named string operations. It cannot branch, loop, call anything, run a shell command, read a
-file, open a network connection, or name a transform the build does not have — a mapping naming one
-fails to load, before a byte of feed data is read.
-
-`brolga mapping validate` checks one; `brolga mapping explain` prints what it will do **and what the
-engine refuses to do whatever the mapping says**, which is what to read first when the mapping came
-from somewhere else. Worked examples are in `examples/mappings/`.
-
-`--mapping` makes that mapping the only parser for the batch, so a mixed batch is two invocations.
-See [the CLI reference](CLI.md#brolga-mapping) for why that is a precedence decision rather than an
-oversight.
-
-Drop files into the `feeds/` directory next to `docker-compose.yml`. It is bind-mounted at
-`/feeds` **read-only**, because Brolga only ever reads them and a writable mount would let a bug
-in an import path damage your own copy of the evidence.
+Drop files into `feeds/` next to `docker-compose.yml` (host mount → `/feeds-host`). Image demos live
+at `/feeds/demo-stix.json` and `/feeds/demo-sigma.yml`.
 
 ```bash
-cp ~/Downloads/threat-bundle.json feeds/
-docker compose run --rm brolga ingest /feeds/threat-bundle.json
+docker compose run --rm brolga ingest /feeds/demo-stix.json /feeds/demo-sigma.yml --mode permissive
+# host files:
+docker compose run --rm brolga ingest /feeds-host/my-bundle.json --mode permissive
 ```
-
-The default mode is strict: a batch
-containing anything Brolga cannot accept fails as a whole and writes nothing, because a partial
-import is very easily mistaken for a complete one. When you would rather keep what parsed:
-
-```bash
-docker compose run --rm brolga ingest --mode permissive /feeds/*.json
-```
-
-Permissive persists the acceptable records and quarantines the rest — it does not discard them.
-`brolga quarantine` lists what was rejected, which parser rejected it, at which stage, and why.
 
 ## Reading what is in the store
 
@@ -360,35 +328,24 @@ imports one at a time.
 
 ## What is and is not reachable
 
-Read this before planning around the container.
+### Works in the image
 
-### Works in the image (dogfood today)
+- **CLI:** `ingest`, `fetch` (OpenCTI / TAXII — needs network; default CLI service is `network_mode: none`, so use a one-off with network or run fetch on the host binary), `stats`, `sources`, `show`, `quarantine`, `search`, `neighbours`, `checkpoint`, `context`, `export`, `mapping`.
+- **HTTP API:** Compose profile `serve` → `brolga-api` on host port `8787`. See [Running the HTTP API](#running-the-http-api) and [API.md](API.md).
+- **PostgreSQL (optional):** build with `BROLGA_FEATURES=postgres` + `docker-compose.postgres.yml`.
 
-- **CLI workflows** on a volume-backed SQLite store: `ingest`, `stats`, `sources`, `show`,
-  `quarantine`, `search`, `neighbours`, `checkpoint`, `context`, `export`, `mapping`, `plugin`.
-- **HTTP API** behind the Compose `serve` profile (`brolga-api` on loopback `:8787` by default).
-  See [Running the HTTP API](#running-the-http-api) and [docs/API.md](API.md).
-- **MCP stdio** via `brolga mcp --database …` (not a long-running Compose service; run it where
-  the agent host can own the process).
-- **Connectors** via `brolga fetch` (OpenCTI, TAXII). The default CLI service uses
-  `network_mode: none`, so fetch needs a one-off container with a network, or a custom Compose
-  override. See [docs/CLI.md](CLI.md).
-- **PostgreSQL (optional).** Default images stay SQLite-only. Build with `BROLGA_FEATURES=postgres`
-  and use [`docker-compose.postgres.yml`](../docker-compose.postgres.yml). See [STORAGE.md](STORAGE.md).
+### You host separately
 
-### Still not provided
+- **OpenCTI** — Brolga only *consumes* it. Install [OpenCTI](https://docs.opencti.io/) (or use an existing instance), create an API token, set `BROLGA_OPENCTI_TOKEN`, then `brolga fetch opencti …`.
+- **Host scheduler** for periodic fetch (`cron` / systemd timer calling `docker compose run … fetch`).
 
-- **No scheduled or automatic fetching.** Nothing polls or refreshes on a timer. Use the host
-  scheduler (`cron`, systemd timer) with `docker compose run --rm brolga …`.
-- **No web UI.** None is planned for the initial stable release.
-- **No metrics endpoint / Prometheus exporter.** Diagnostics go to stderr; `--log-format json`
-  is one object per line for a log collector. Audit events are stored in the database, not pushed.
-- **Wasm plugin execution** is present for validated manifests; do not treat unvetted guests as
-  production without reading [PLUGIN-DEVELOPMENT.md](PLUGIN-DEVELOPMENT.md) and the threat model.
+### Not provided
 
-### Lab / fixture demo
+- No MISP, no web UI, no Prometheus exporter, no built-in polling, no publish-back to OpenCTI.
 
-For offline multi-format ingest + normalised-output artefacts, use [`lab/`](../lab/) (`#60`).
+### Lab / offline demo
+
+[`lab/`](../lab/) — multi-format fixtures without a network.
 
 ## Troubleshooting
 
@@ -426,12 +383,8 @@ config`; `--version`, `doctor`, `init`, `config validate`, and `config explain` 
 holding `brolga.sqlite` owned by the non-root user, with a read-only root filesystem, no network,
 and all capabilities dropped; and the `tar` backup recipe.
 
-**Also verified, in the image rather than natively:** ingesting a STIX 2.1 bundle and
-a plain indicator list in one batch — 37 records accepted, 3 source objects retained, 2 quarantined
-with their reasons — then reading them back with `stats`, `sources`, and `quarantine` from separate
-containers against the same volume. The output is identical to the native binary's. `id` inside the
-container reports `uid=65532(brolga)`, and the same run succeeds under `--read-only --network none
---cap-drop ALL`.
+**Also verified, in the image rather than natively:** ingesting STIX + Sigma demo fixtures, then
+reading them back with `stats` / `context` and serving `/api/v1/*` from `brolga-api`.
 
 **Not verified:**
 
@@ -443,71 +396,74 @@ container reports `uid=65532(brolga)`, and the same run succeeds under `--read-o
 
 ## Running the HTTP API
 
-Brolga's other shape: a read-only server that other services pull context from. See
-[docs/API.md](API.md) for the routes and the response contract.
+Read-only server for other products on your LAN. Routes and auth: [API.md](API.md).
+
+### Loopback only (default)
+
+```bash
+cp .env.example .env
+printf 'BROLGA_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
+docker compose --profile serve up -d brolga-api
+curl -s localhost:8787/api/v1/health
+```
+
+### Homelab / LAN (other machines)
+
+Publish on all interfaces so services on the same network can call Brolga:
+
+```bash
+# in .env
+BROLGA_API_TOKEN=<at least 16 random chars>
+BROLGA_API_BIND=0.0.0.0
+```
+
+```bash
+docker compose --profile serve up -d --build brolga-api
+```
+
+From another host:
+
+```bash
+curl -s http://192.168.1.19:8787/api/v1/health
+curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" \
+  http://192.168.1.19:8787/api/v1/stats
+curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"subject":{"kind":"ip","value":"203.0.113.42"}}' \
+  http://192.168.1.19:8787/api/v1/context
+```
+
+`BROLGA_API_TOKEN` is **required** when binding off loopback. Compose fails to render without it;
+the process exits 3 rather than serving an open database.
+
+### Token
 
 ```bash
 export BROLGA_API_TOKEN="$(openssl rand -hex 32)"
-docker compose --profile serve up -d brolga-api
 ```
 
-It is behind a Compose profile, so a bare `docker compose up` still runs `doctor` and exits rather
-than quietly starting a daemon.
+Clients send `Authorization: Bearer <token>`. `/api/v1/health` needs no token.
 
-### The token is required, not optional
-
-`BROLGA_API_TOKEN` has no default and no fallback. Compose refuses to render the file without it,
-and the server exits 3 rather than starting — a missing token is a failed deployment rather than an
-open database.
-
-```console
-$ docker compose --profile serve up -d brolga-api
-required variable BROLGA_API_TOKEN is missing a value: set BROLGA_API_TOKEN to a token of at
-least 16 characters
-```
-
-### Who can reach it
-
-The published port binds the host's loopback by default. To let other machines reach it:
+### Share the database with the CLI
 
 ```bash
-export BROLGA_API_BIND=0.0.0.0
-docker compose --profile serve up -d brolga-api
+docker compose run --rm brolga ingest /feeds/demo-stix.json --mode permissive
+curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" localhost:8787/api/v1/stats
 ```
 
-Publishing to every interface is deliberately something you have to type. Note that the container's
-own `--bind 0.0.0.0` is not the boundary — the container's network namespace is, and the published
-port is what crosses it.
+One writer at a time for ingest; the API may serve during a single ingest.
 
-### Checking it
+### Pulling from OpenCTI into this host
+
+CLI default service has `network_mode: none`. For fetch, give the one-off a network:
 
 ```bash
-curl -s localhost:8787/api/v1/health                                   # no token needed
-curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" \
-     localhost:8787/api/v1/stats | jq .data
+export BROLGA_OPENCTI_TOKEN=…   # never on the CLI flags
+docker compose run --rm --network bridge brolga \
+  fetch opencti https://opencti.example.org --name lab-octi --allow-private
 ```
 
-`/health` is exempt from authentication so a probe does not fail when the token rotates. Everything
-else returns 401 without a valid token.
-
-### Sharing the database with the CLI
-
-Both services use the `brolga-data` volume, so ingest with the command-line service and the running
-API sees the result:
-
-```bash
-docker compose run --rm brolga ingest /feeds/bundle.json --mode permissive
-curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" localhost:8787/api/v1/stats | jq .data
-```
-
-SQLite allows one writer and many readers, so an ingest running while the API serves is fine. Two
-ingests at once are not — the second waits on the busy timeout and then fails.
-
-### What the container gives up
-
-Read-only root filesystem, every capability dropped, `no-new-privileges`, non-root user, 1 GB
-memory, 256 processes. The API makes no outbound connections; unlike the command-line service it
-cannot use `network_mode: none`, because it has to answer on a port.
+(Adjust URL/network policy for your OpenCTI placement.)
 
 ## Audit events
 

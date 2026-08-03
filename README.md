@@ -64,23 +64,37 @@ OpenCTI instance ──GraphQL toStix──┐
 TAXII / STIX files ────────────────┘
 ```
 
-## Docker
+## Docker (CLI + HTTP API)
 
 ```bash
 cp .env.example .env
 printf 'BROLGA_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
+# LAN access for other products (homelab):
+# echo 'BROLGA_API_BIND=0.0.0.0' >> .env
 
 docker compose build
 docker compose run --rm brolga doctor
 docker compose run --rm brolga ingest /feeds/demo-stix.json /feeds/demo-sigma.yml --mode permissive
 docker compose --profile serve up -d brolga-api
+
+curl -s localhost:8787/api/v1/health
+curl -s -H "Authorization: Bearer $BROLGA_API_TOKEN" localhost:8787/api/v1/stats
 ```
+
+Full guide (LAN bind, volumes, OpenCTI fetch): [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).  
+API routes: [docs/API.md](docs/API.md).
+
+### OpenCTI is separate
+
+Brolga **does not** start an OpenCTI container. Host OpenCTI yourself (or use an existing
+instance), set `BROLGA_OPENCTI_TOKEN`, then `brolga fetch opencti https://…`.
 
 ## Docs
 
 - [CLI](docs/CLI.md) — command reference
+- [API](docs/API.md) — HTTP surface for other products
+- [Deployment](docs/DEPLOYMENT.md) — homelab Compose + LAN serve
 - [Architecture](docs/ARCHITECTURE.md)
-- [Deployment](docs/DEPLOYMENT.md)
 - [Threat model](docs/THREAT-MODEL.md)
 
 ## License
