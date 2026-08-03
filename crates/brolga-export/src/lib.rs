@@ -48,13 +48,9 @@
 
 #![forbid(unsafe_code)]
 
-pub mod csv;
-pub mod dot;
 pub mod json;
 pub mod markdown;
 pub mod misp;
-pub mod sarif;
-pub mod sigma;
 pub mod stix;
 
 use std::collections::BTreeMap;
@@ -409,11 +405,6 @@ impl ExporterRegistry {
             markdown::MarkdownExporter::boxed(),
             markdown::TextExporter::boxed(),
             markdown::AgentBriefExporter::boxed(),
-            dot::DotExporter::boxed(),
-            csv::CsvExporter::boxed(),
-            sigma::SigmaMetadataExporter::boxed(),
-            sigma::HuntingPackExporter::boxed(),
-            sarif::SarifExporter::boxed(),
         ] {
             registry.register(exporter);
         }

@@ -8,18 +8,10 @@
 //! cancellation, storage, and quarantine are the pipeline's, so a new format gets all five by
 //! construction and cannot weaken any of them by leaving something out.
 
-pub mod csaf;
+// Core TI formats only: STIX, MISP, flat feeds, Sigma, plus XML helpers for mappings.
 pub mod delimited;
-pub mod kev;
 pub mod misp;
-pub mod nvd;
-pub mod osv;
-pub mod sarif;
-pub mod sbom;
 pub mod sigma;
 pub mod stix;
 pub mod stix_pattern;
-pub mod telemetry;
-pub mod vuln;
 pub mod xml;
-pub mod yara;

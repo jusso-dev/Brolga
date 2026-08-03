@@ -36,10 +36,7 @@
 
 use brolga_ingest::canon;
 use brolga_ingest::detect::FormatHint;
-use brolga_ingest::formats::{
-    csaf, delimited, kev, misp, nvd, osv, sarif, sbom, sigma, stix, stix_pattern, telemetry, xml,
-    yara,
-};
+use brolga_ingest::formats::{delimited, misp, sigma, stix, stix_pattern};
 use brolga_ingest::mapping::Mapping;
 use brolga_ingest::{Document, IngestMode, ParserRegistry, Pipeline};
 use brolga_model::provenance::{MediaType, SourceOrigin};
@@ -70,18 +67,6 @@ pub fn shipping_registry() -> ParserRegistry {
     registry.register(delimited::DelimitedParser::boxed());
     registry.register(delimited::JsonLinesParser::boxed());
     registry.register(sigma::SigmaParser::boxed());
-    registry.register(yara::YaraParser::boxed());
-    registry.register(telemetry::TelemetryParser::boxed());
-    registry.register(xml::OpenIocParser::boxed());
-    registry.register(xml::IodefParser::boxed());
-    registry.register(osv::OsvParser::boxed());
-    registry.register(nvd::NvdParser::boxed());
-    registry.register(csaf::CsafParser::boxed());
-    registry.register(csaf::CvrfParser::boxed());
-    registry.register(kev::KevParser::boxed());
-    registry.register(sbom::CycloneDxParser::boxed());
-    registry.register(sbom::SpdxParser::boxed());
-    registry.register(sarif::SarifParser::boxed());
     registry
 }
 
@@ -358,29 +343,7 @@ pub fn load_mapping(data: &[u8]) {
 /// Panics if an escaper lets through the character it exists to neutralise. Each is the single point
 /// at which feed text reaches a language another program parses.
 pub fn escape_every_way(text: &str) {
-    use brolga_export::{csv, dot, markdown, sigma, stix};
-
-    // CSV: no cell may begin with a character a spreadsheet evaluates.
-    let cell = csv::cell_of(text);
-    let inner = cell.strip_prefix('"').unwrap_or(&cell);
-    assert!(
-        !inner.starts_with(['=', '+', '-', '@']) || inner.starts_with('\''),
-        "a CSV cell reached the spreadsheet as a formula, from a {}-byte input",
-        text.len()
-    );
-
-    // DOT: no unescaped quote, because an unescaped quote leaves the label and reaches the parser.
-    let label = dot::escape_label(text);
-    assert!(
-        !has_unescaped(&label, '"'),
-        "a DOT label can be escaped from, from a {}-byte input",
-        text.len()
-    );
-    assert!(
-        !label.contains('\n') && !label.contains('\r'),
-        "a real newline survived DOT escaping, from a {}-byte input",
-        text.len()
-    );
+    use brolga_export::{markdown, stix};
 
     // Markdown: no unescaped inline-active character, and no newline — the second is what stops a
     // block marker reaching the first column.
@@ -395,19 +358,6 @@ pub fn escape_every_way(text: &str) {
     assert!(
         !rendered.contains('\n') && !rendered.contains('\r'),
         "a newline survived Markdown escaping, from a {}-byte input",
-        text.len()
-    );
-
-    // Sigma YAML: always quoted, never containing a raw newline that could add a key.
-    let scalar = sigma::yaml_scalar(text);
-    assert!(
-        scalar.starts_with('"') && scalar.ends_with('"') && scalar.len() >= 2,
-        "a YAML scalar is not quoted, from a {}-byte input",
-        text.len()
-    );
-    assert!(
-        !scalar.contains('\n') && !scalar.contains('\r'),
-        "a newline in a YAML scalar could add a key, from a {}-byte input",
         text.len()
     );
 

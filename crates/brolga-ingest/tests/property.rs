@@ -19,9 +19,7 @@
 
 use brolga_ingest::detect::FormatHint;
 use brolga_ingest::formats::stix_pattern;
-use brolga_ingest::formats::{
-    csaf, delimited, kev, misp, nvd, osv, sarif, sbom, sigma, stix, telemetry, xml, yara,
-};
+use brolga_ingest::formats::{delimited, misp, sigma, stix};
 use brolga_ingest::testing::{CatchAllParser, TestRecordsParser};
 use brolga_ingest::{Document, ParserRegistry, Pipeline};
 use brolga_model::{
@@ -50,18 +48,6 @@ fn shipping_registry() -> ParserRegistry {
     registry.register(delimited::DelimitedParser::boxed());
     registry.register(delimited::JsonLinesParser::boxed());
     registry.register(sigma::SigmaParser::boxed());
-    registry.register(yara::YaraParser::boxed());
-    registry.register(telemetry::TelemetryParser::boxed());
-    registry.register(xml::OpenIocParser::boxed());
-    registry.register(xml::IodefParser::boxed());
-    registry.register(osv::OsvParser::boxed());
-    registry.register(nvd::NvdParser::boxed());
-    registry.register(csaf::CsafParser::boxed());
-    registry.register(csaf::CvrfParser::boxed());
-    registry.register(kev::KevParser::boxed());
-    registry.register(sbom::CycloneDxParser::boxed());
-    registry.register(sbom::SpdxParser::boxed());
-    registry.register(sarif::SarifParser::boxed());
     registry
 }
 

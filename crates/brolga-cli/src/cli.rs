@@ -191,68 +191,19 @@ pub(crate) enum Command {
     /// Produce a context pack for a subject.
     Context(ContextArgs),
 
-    /// Serve the Model Context Protocol over stdio.
-    ///
-    /// Reads JSON-RPC from stdin and writes it to stdout, so an agent runtime can start it as a
-    /// subprocess. Diagnostics go to stderr, which is the only stream left.
-    Mcp(McpArgs),
-
     /// Show what a context profile will do, without retrieving anything.
     ///
     /// The answer to "why did my pack not contain X?", available before the pack exists rather
     /// than by reading one and inferring backwards.
     ExplainPlan(ExplainPlanArgs),
 
-    /// Validate and explain a declarative mapping.
+    /// Validate and explain a declarative mapping for custom feed shapes.
     #[command(subcommand)]
     Mapping(MappingCommand),
-
-    /// Validate and explain a plugin manifest (SDK / WIT ABI; no host execution yet).
-    #[command(subcommand)]
-    Plugin(PluginCommand),
-
-    /// Language-model proposals (disabled unless built with `--features llm`).
-    #[command(subcommand)]
-    Llm(LlmCommand),
 
     /// List the export formats this build ships.
     #[command(subcommand)]
     Export(ExportCommand),
-}
-
-/// What to do with the optional LLM proposal interface.
-#[derive(Debug, Subcommand)]
-pub(crate) enum LlmCommand {
-    /// Show whether this binary can call a model (default: no).
-    Status,
-
-    /// Produce an **unverified** proposal for a subject and evidence text.
-    ///
-    /// Requires `--features llm` and an explicit provider. Output is never authoritative.
-    Propose(LlmProposeArgs),
-}
-
-/// Arguments for `brolga llm propose`.
-#[derive(Debug, Args)]
-pub(crate) struct LlmProposeArgs {
-    /// Subject (for example an observable spelling).
-    pub(crate) subject: String,
-
-    /// Evidence text file (untrusted). Required.
-    #[arg(long)]
-    pub(crate) evidence: PathBuf,
-
-    /// Provider: `mock` (no network), or with `llm` feature: `ollama`, `llamacpp`, `openai`.
-    #[arg(long, default_value = "mock")]
-    pub(crate) provider: String,
-
-    /// Model name for HTTP providers.
-    #[arg(long)]
-    pub(crate) model: Option<String>,
-
-    /// Base URL for OpenAI-compatible endpoints (remote requires redistribute capability).
-    #[arg(long)]
-    pub(crate) base_url: Option<String>,
 }
 
 /// What to ask about exporting.
@@ -286,61 +237,6 @@ pub(crate) enum MappingCommand {
 pub(crate) struct MappingFileArgs {
     /// The mapping file. YAML or JSON.
     pub(crate) path: PathBuf,
-}
-
-/// What to do with a plugin manifest or package.
-#[derive(Debug, Subcommand)]
-pub(crate) enum PluginCommand {
-    /// Load a plugin manifest and report every problem found.
-    ///
-    /// Exits zero only if the host would accept the document for loading. Does not execute any
-    /// WebAssembly unless combined with a host-enabled build (`--features plugins`).
-    Validate(PluginFileArgs),
-
-    /// Show what a manifest declares, including fixed security refusals.
-    ///
-    /// The refusals are the half that matters when the plugin came from somewhere else.
-    Explain(PluginFileArgs),
-
-    /// Execute `invoke.call` on a pure-compute plugin package (requires `--features plugins`).
-    ///
-    /// The package directory must contain `manifest.yml` and usually `component.wasm`. Default
-    /// sandbox: no filesystem, no network, fuel and wall-clock caps.
-    Run(PluginRunArgs),
-}
-
-/// A plugin manifest to read.
-#[derive(Debug, Args)]
-pub(crate) struct PluginFileArgs {
-    /// The manifest file. YAML or JSON.
-    pub(crate) path: PathBuf,
-}
-
-/// Arguments for `brolga plugin run`.
-#[derive(Debug, Args)]
-pub(crate) struct PluginRunArgs {
-    /// Package directory (`manifest.yml` + optional `component.wasm`).
-    pub(crate) package: PathBuf,
-
-    /// Extension point name (for example `parser`).
-    #[arg(long)]
-    pub(crate) extension: String,
-
-    /// Contract version (for example `1.0`).
-    #[arg(long, default_value = "1.0")]
-    pub(crate) contract: String,
-
-    /// Request body file. Defaults to empty JSON object bytes `{}` when omitted.
-    #[arg(long)]
-    pub(crate) request: Option<PathBuf>,
-}
-
-/// `brolga mcp`.
-#[derive(Debug, Args)]
-pub(crate) struct McpArgs {
-    /// Where the database lives.
-    #[arg(long, default_value = "brolga.sqlite")]
-    pub(crate) database: PathBuf,
 }
 
 /// `brolga context`.
@@ -823,7 +719,6 @@ impl Command {
             Self::Ingest(_) => "ingest",
             Self::Fetch(_) => "fetch",
             Self::ExplainPlan(_) => "explain-plan",
-            Self::Mcp(_) => "mcp",
             Self::Stats(_) => "stats",
             Self::Show(_) => "show",
             Self::Quarantine(_) => "quarantine",
@@ -835,8 +730,6 @@ impl Command {
             Self::Completion(_) => "completion",
             Self::Context(_) => "context",
             Self::Mapping(_) => "mapping",
-            Self::Plugin(_) => "plugin",
-            Self::Llm(_) => "llm",
             Self::Export(_) => "export",
         }
     }

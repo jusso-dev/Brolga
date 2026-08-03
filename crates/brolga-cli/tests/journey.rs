@@ -22,7 +22,7 @@
 )]
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output, Stdio};
+use std::process::{Command, Output};
 
 /// The demo fixtures, resolved from the workspace root rather than the current directory.
 fn fixture(name: &str) -> PathBuf {
@@ -133,76 +133,6 @@ fn the_readme_quickstart_runs_from_a_clean_database() {
     assert_eq!(code(&plan), 0, "{}", stderr(&plan));
     let plan: serde_json::Value = serde_json::from_str(&stdout(&plan)).expect("a JSON plan");
     assert!(!plan["plan"].as_array().unwrap().is_empty());
-}
-
-/// **The agent journey.** Handshake, list tools, ask about the same observable, and read the
-/// evidence back — over the transport an agent runtime actually uses.
-#[test]
-fn the_mcp_agent_journey_completes_over_stdio() {
-    use std::io::Write;
-
-    let directory = tempfile::tempdir().expect("a temporary directory");
-    let database = directory.path().join("brolga.sqlite");
-    let database = database.to_str().expect("a usable path");
-
-    let feed = fixture("feed.json");
-    let ingest = brolga(&[
-        "ingest",
-        feed.to_str().unwrap(),
-        "--mode",
-        "permissive",
-        "--database",
-        database,
-    ]);
-    assert_eq!(code(&ingest), 0, "{}", stderr(&ingest));
-
-    let mut child = Command::new(env!("CARGO_BIN_EXE_brolga"))
-        .args(["mcp", "--database", database])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("the MCP server must start");
-
-    {
-        let stdin = child.stdin.as_mut().expect("stdin");
-        for line in [
-            r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}"#,
-            r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
-            r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#,
-            r#"{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"brolga_context","arguments":{"kind":"ip","value":"203.0.113.42"}}}"#,
-        ] {
-            writeln!(stdin, "{line}").expect("write a frame");
-        }
-        // Closing stdin is how an agent runtime ends a session.
-    }
-
-    let output = child.wait_with_output().expect("the server must exit");
-    assert_eq!(code(&output), 0, "{}", stderr(&output));
-
-    let frames: Vec<serde_json::Value> = stdout(&output)
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| serde_json::from_str(line).expect("each frame is JSON"))
-        .collect();
-
-    // Three, not four: the notification is not answered.
-    assert_eq!(frames.len(), 3, "{frames:#?}");
-    assert!(frames[0]["result"]["protocolVersion"].is_string());
-    assert!(!frames[1]["result"]["tools"].as_array().unwrap().is_empty());
-
-    let pack = &frames[2]["result"]["structuredContent"];
-    assert_eq!(pack["disposition"], "malicious", "{pack}");
-    assert!(
-        !pack["handles"].as_array().unwrap().is_empty(),
-        "an agent must be handed something it can expand: {pack}"
-    );
-
-    // The agent can see what it did *not* get, which is the difference between a compressed answer
-    // and a quietly incomplete one.
-    assert!(pack["gaps"].is_array());
-    assert!(pack["exclusions"].is_array());
-    assert!(pack["policy"].is_object());
 }
 
 /// **The criterion.** Nothing in the demo reaches a network — no connector, no resolver, no model.
@@ -358,51 +288,6 @@ fn an_invalid_mapping_exits_as_a_configuration_error() {
         stderr(&validate).contains("recursive descent"),
         "the refusal must name the construct: {}",
         stderr(&validate)
-    );
-}
-
-/// Plugin manifests: validate a shipped example, explain refusals, reject wildcards as config errors.
-#[test]
-fn the_plugin_manifest_journey_runs_end_to_end() {
-    let manifest =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/plugins/parser-manifest.yml");
-    let manifest = manifest.to_str().expect("a usable path");
-
-    let validate = brolga(&["plugin", "validate", manifest]);
-    assert_eq!(code(&validate), 0, "{}", stderr(&validate));
-    assert!(
-        stdout(&validate).contains("valid"),
-        "validate must say the manifest is valid: {}",
-        stdout(&validate)
-    );
-
-    let explain = brolga(&["plugin", "explain", manifest]);
-    assert_eq!(code(&explain), 0, "{}", stderr(&explain));
-    let explained = stdout(&explain);
-    assert!(
-        explained.contains("refusals") || explained.contains("no native"),
-        "explain must surface security refusals: {explained}"
-    );
-    assert!(
-        explained.contains("pure compute") || explained.contains("capabilities"),
-        "explain must describe capabilities: {explained}"
-    );
-
-    let directory = tempfile::tempdir().expect("a temporary directory");
-    let path = directory.path().join("evil.yml");
-    std::fs::write(
-        &path,
-        "schema_version: brolga.plugin.manifest/1.0\nname: evil\nversion: 1\napi: \"0.1.0\"\n\
-         extension_points:\n  - kind: parser\n    contract_version: \"1.0\"\n\
-         capabilities:\n  - kind: network_egress\n    host: \"*\"\n",
-    )
-    .expect("write the manifest");
-    let rejected = brolga(&["plugin", "validate", path.to_str().unwrap()]);
-    assert_eq!(
-        code(&rejected),
-        3,
-        "wildcard capability is a configuration error: {}",
-        stderr(&rejected)
     );
 }
 
