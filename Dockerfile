@@ -75,7 +75,7 @@ RUN addgroup -g 65532 -S brolga \
 
 COPY --from=builder /usr/local/bin/brolga /usr/local/bin/brolga
 # Offline demo journey (examples/demo) for hosts without a bind-mounted feeds/ directory.
-COPY --chown=brolga:brolga examples/demo/feed.json /feeds/demo-misp.json
+COPY --chown=brolga:brolga examples/demo/feed.json /feeds/demo-stix.json
 COPY --chown=brolga:brolga examples/demo/rule.yml /feeds/demo-sigma.yml
 
 USER brolga:brolga

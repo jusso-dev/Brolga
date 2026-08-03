@@ -45,7 +45,7 @@ Artefacts land under `lab/output/` (gitignored; regenerated each run).
 ### What success looks like
 
 - `lab/output/stats.json` — non-zero entities/claims after ingest
-- `lab/output/demo-context-ip.json` — pack for `203.0.113.42` (MISP + Sigma meet)
+- `lab/output/demo-context-ip.json` — pack for `203.0.113.42` (STIX + Sigma meet)
 - `lab/output/quarantine.json` — malformed fixture counted, not dropped
 - `lab/output/demo-sources.json` — retained original source objects
 
@@ -58,7 +58,7 @@ mkdir -p feeds
 export BROLGA_API_TOKEN="$(openssl rand -hex 32)"   # or copy .env.example → .env
 docker compose build
 docker compose run --rm brolga doctor
-docker compose run --rm brolga ingest /feeds/demo-misp.json /feeds/demo-sigma.yml --mode permissive
+docker compose run --rm brolga ingest /feeds/demo-stix.json /feeds/demo-sigma.yml --mode permissive
 docker compose run --rm brolga context ip 203.0.113.42
 docker compose --profile serve up -d brolga-api
 curl -s localhost:8787/api/v1/health
@@ -80,12 +80,11 @@ Checked-in samples under `lab/fixtures/` (copied from test/demo corpora; synthet
 
 | Path | Format family |
 | --- | --- |
-| `demo/feed.json` + `demo/rule.yml` | MISP event + Sigma (README journey) |
+| `demo/feed.json` + `demo/rule.yml` | STIX bundle + Sigma (README journey) |
 | `plain/iocs.txt` | plain-text IoC list |
 | `csv/indicators.csv` | CSV indicators |
 | `json/*`, `ndjson/*`, `flat/*` | JSON array, NDJSON, TSV |
 | `stix/*` | STIX 2.0 / 2.1 / ATT&CK snippets |
-| `misp/*` | MISP event + warning list |
 | `detection/*` | Sigma + YARA |
 | `telemetry/events.log` | CEF/LEEF/syslog style |
 | `xml/*` | OpenIOC + IODEF |
@@ -93,7 +92,7 @@ Checked-in samples under `lab/fixtures/` (copied from test/demo corpora; synthet
 | `malformed/not-json.txt` | quarantine path |
 
 Not yet in fixture mode (still library/test covered, not wired here): full CSAF/CVRF/NVD matrix,
-connector simulation (MISP/TAXII/OpenCTI mocks), `live-public`, `operator-connectors`. See issue #60.
+connector simulation (TAXII/OpenCTI mocks), `live-public`, `operator-connectors`. See issue #60.
 
 ## PostgreSQL lab profile
 

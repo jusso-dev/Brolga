@@ -19,7 +19,7 @@
 use std::io::Write;
 use std::path::Path;
 
-use brolga_ingest::formats::{delimited, misp, sigma, stix};
+use brolga_ingest::formats::{delimited, sigma, stix};
 use brolga_ingest::mapping::{MappedParser, Mapping};
 use brolga_ingest::{
     Document, DocumentReport, IngestError, IngestMode, IngestReport, ParserRegistry, Pipeline,
@@ -39,10 +39,9 @@ use crate::output::{OutputMode, Streams};
 /// CLI — the sort of divergence nobody notices until a file parses in one and not the other.
 #[must_use]
 pub(crate) fn registry() -> ParserRegistry {
-    // Flare-style core: STIX + MISP + flat feeds + Sigma. Declarative mappings extend this set.
+    // Core: STIX (OpenCTI/TAXII), flat feeds, Sigma. Declarative mappings extend this set.
     let mut registry = ParserRegistry::new();
     registry.register(stix::StixParser::boxed());
-    registry.register(misp::MispParser::boxed());
     registry.register(delimited::DelimitedParser::boxed());
     registry.register(delimited::JsonLinesParser::boxed());
     registry.register(sigma::SigmaParser::boxed());

@@ -281,8 +281,7 @@ fi
 Pull intelligence from a remote platform. **OpenCTI is the primary TI source.** TAXII is secondary
 for STIX collections that are not OpenCTI-backed. Read-only: Brolga never publishes upstream.
 
-There is **no live MISP API connector**. MISP event JSON can still be file-ingested offline; live
-sync is OpenCTI (or TAXII).
+Brolga has **no MISP support**. Primary remote source is OpenCTI; secondary is TAXII.
 
 ```bash
 # Primary: OpenCTI GraphQL → toStix → local store
@@ -690,7 +689,7 @@ Which capability an export needs depends on the format:
 | `machine` | `json`, `compact`, `yaml`, `jsonl`, `csv`, `sarif` | `read` |
 | `human` | `markdown`, `text`, `dot`, `sigma`, `hunt` | `read` |
 | `agent` | `brief` | `read` |
-| `interchange` | `stix`, `misp` | `redistribute` |
+| `interchange` | `stix` | `redistribute` |
 
 Reading your own pack as Markdown is a read. Producing a STIX bundle creates an artefact whose whole
 purpose is to be handed to another platform, and that is redistribution. A gate placed before format
@@ -725,10 +724,9 @@ unbypassable rather than merely present.
 - **SARIF invents no file locations, and says when it does not apply.** A pack about a network
   indicator has no place in a source tree; it exports as a notification with
   `brolgaApplicable: false` rather than as a result a code-scanning tool would annotate.
-- **MISP omits `Orgc`, object templates, and galaxy clusters,** each of which needs configuration
   shared with the receiving instance. Fabricating one attributes intelligence to an organisation or
   an actor Brolga has no basis to name. Events are exported unpublished, with distribution `0`.
-- **STIX and MISP identifiers are derived from pack content, not generated.** Re-exporting an
+- **STIX identifiers are derived from pack content, not generated.** Re-exporting an
   unchanged pack produces byte-identical output, so a consumer re-ingesting it creates no duplicates.
 - **Nothing is pushed anywhere.** Export writes bytes. There is no code in Brolga that publishes to a
   SIEM or writes back to an upstream platform.

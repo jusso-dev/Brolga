@@ -96,7 +96,7 @@ docker compose build
 docker compose run --rm brolga doctor
 # Image ships demo files at /feeds/…; host drop dir is /feeds-host (see compose).
 docker compose run --rm brolga ingest \
-  /feeds/demo-misp.json /feeds/demo-sigma.yml --mode permissive
+  /feeds/demo-stix.json /feeds/demo-sigma.yml --mode permissive
 docker compose run --rm brolga context ip 203.0.113.42
 docker compose --profile serve up -d brolga-api
 set -a; . ./.env; set +a
@@ -143,7 +143,7 @@ copy it in — see [Reading and writing the volume](#reading-and-writing-the-vol
 
 ## Ingesting a file
 
-Brolga reads STIX 2.0 and 2.1 and ATT&CK bundles, MISP events, warning lists and feed exports,
+Brolga reads STIX 2.0 and 2.1 and ATT&CK bundles, STIX bundles,
 Sigma rules, YARA rules, OpenIOC definitions, IODEF incident documents, CEF/LEEF/syslog telemetry,
 and CSV/TSV/JSON/NDJSON/plain-text indicator lists. It also reads vulnerability and software
 intelligence: OSV records, NVD JSON in both the 2.0 API and retired 1.1 feed shapes, CSAF 2.0 and
@@ -370,7 +370,7 @@ Read this before planning around the container.
   See [Running the HTTP API](#running-the-http-api) and [docs/API.md](API.md).
 - **MCP stdio** via `brolga mcp --database …` (not a long-running Compose service; run it where
   the agent host can own the process).
-- **Connectors** via `brolga fetch` (MISP, TAXII, OpenCTI). The default CLI service uses
+- **Connectors** via `brolga fetch` (OpenCTI, TAXII). The default CLI service uses
   `network_mode: none`, so fetch needs a one-off container with a network, or a custom Compose
   override. See [docs/CLI.md](CLI.md).
 - **PostgreSQL (optional).** Default images stay SQLite-only. Build with `BROLGA_FEATURES=postgres`
@@ -426,7 +426,7 @@ config`; `--version`, `doctor`, `init`, `config validate`, and `config explain` 
 holding `brolga.sqlite` owned by the non-root user, with a read-only root filesystem, no network,
 and all capabilities dropped; and the `tar` backup recipe.
 
-**Also verified, in the image rather than natively:** ingesting a STIX 2.1 bundle, a MISP event and
+**Also verified, in the image rather than natively:** ingesting a STIX 2.1 bundle and
 a plain indicator list in one batch — 37 records accepted, 3 source objects retained, 2 quarantined
 with their reasons — then reading them back with `stats`, `sources`, and `quarantine` from separate
 containers against the same volume. The output is identical to the native binary's. `id` inside the

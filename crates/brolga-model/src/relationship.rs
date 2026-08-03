@@ -55,7 +55,7 @@ impl fmt::Display for NodeRef {
 
 /// The meaning of a relationship.
 ///
-/// Chosen to be source-vocabulary-neutral: a STIX `relationship_type`, a MISP object reference, and
+/// Chosen to be source-vocabulary-neutral: a STIX `relationship_type` and
 /// an ATT&CK mapping each translate onto these, and none of them appears in the canonical model.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,

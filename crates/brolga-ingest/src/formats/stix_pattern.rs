@@ -460,7 +460,7 @@ fn unsupported_operator(symbol: &str) -> PatternError {
 
 /// Canonicalise a comparison through the shared canonicalisers.
 ///
-/// The same functions the MISP parser calls, deliberately: an address published as a MISP attribute
+/// Shared canonicalisers: an address published in two STIX documents
 /// and the same address published inside a STIX pattern must derive one observable identifier, or
 /// the two feeds populate the graph twice and a lookup finds half of what is held.
 fn observable_of_comparison(path: &str, value: &str) -> Result<Observable, PatternError> {

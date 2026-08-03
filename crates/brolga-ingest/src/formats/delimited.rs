@@ -603,7 +603,7 @@ impl IntelligenceParser for JsonLinesParser {
             );
         };
         let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
-        // Never claim STIX or MISP: they are JSON too, and a catch-all JSON reader that outbids a
+        // Never claim STIX: it is JSON too, and a catch-all JSON reader that outbids a
         // specific parser would silently downgrade every bundle to untyped attributes.
         if compact.contains("\"type\":\"bundle\"") || compact.contains("\"Event\":{") {
             return candidate(

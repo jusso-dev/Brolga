@@ -493,7 +493,7 @@ fn later_configuration_files_override_earlier_ones() {
 /// A scratch directory holding the fixture corpus, so each test gets its own database.
 fn workspace() -> tempfile::TempDir {
     let directory = tempfile::TempDir::new().expect("a scratch directory");
-    for name in ["bundle.json", "event.json", "indicators.txt"] {
+    for name in ["bundle.json", "indicators.txt"] {
         std::fs::copy(
             Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("tests/fixtures")
@@ -514,7 +514,7 @@ fn brolga_in(directory: &Path, arguments: &[&str]) -> Output {
         .expect("the brolga binary must run")
 }
 
-/// The whole point of this change: a real STIX bundle, a real MISP event, and a plain indicator
+/// The whole point of this change: a real STIX bundle and a plain indicator
 /// list go in through the actual binary and come back out as counted records.
 #[test]
 fn three_real_formats_ingest_through_the_binary_and_are_readable_afterwards() {
@@ -526,7 +526,6 @@ fn three_real_formats_ingest_through_the_binary_and_are_readable_afterwards() {
         &[
             "ingest",
             "bundle.json",
-            "event.json",
             "indicators.txt",
             "--mode",
             "permissive",
@@ -547,12 +546,12 @@ fn three_real_formats_ingest_through_the_binary_and_are_readable_afterwards() {
     assert!(parsed["claims"].as_u64().unwrap_or(0) > 0, "{parsed}");
     assert_eq!(
         parsed["source_objects"].as_u64(),
-        Some(3),
+        Some(2),
         "one source object per file: {parsed}"
     );
     assert_eq!(
         parsed["retained_sources"].as_u64(),
-        Some(3),
+        Some(2),
         "the original bytes are retained by default: {parsed}"
     );
 }

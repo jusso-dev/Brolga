@@ -275,7 +275,7 @@ pub enum SourceOrigin {
     },
     /// Retrieved through a connector to an upstream platform.
     Connector {
-        /// The upstream system, for example `misp` or `opencti`.
+        /// The upstream system, for example `opencti` or `taxii`.
         system: ShortText,
         /// The collection, feed, or endpoint within that system.
         collection: Option<ShortText>,

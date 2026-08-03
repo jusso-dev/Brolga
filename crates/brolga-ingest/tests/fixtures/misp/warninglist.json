@@ -1,8 +1,0 @@
-{
-  "name": "List of known Google Public DNS IP addresses",
-  "version": 20240501,
-  "description": "Known Google public DNS resolvers, commonly a false positive.",
-  "type": "cidr",
-  "matching_attributes": ["ip-src", "ip-dst", "ip"],
-  "list": ["8.8.8.8", "8.8.4.4", "2001:4860:4860::8888"]
-}

@@ -63,7 +63,7 @@ fn the_readme_quickstart_runs_from_a_clean_database() {
     let feed = fixture("feed.json");
     let rule = fixture("rule.yml");
 
-    // 1. Ingest a MISP event and a Sigma rule in one batch. Detection decides the format per file,
+    // 1. Ingest a STIX bundle and a Sigma rule in one batch. Detection decides the format per file,
     //    so a mixed batch is the ordinary case rather than a special one.
     let ingest = brolga(&[
         "ingest",
@@ -103,11 +103,11 @@ fn the_readme_quickstart_runs_from_a_clean_database() {
     assert_eq!(code(&context), 0, "{}", stderr(&context));
     let pack: serde_json::Value = serde_json::from_str(&stdout(&context)).expect("a JSON pack");
 
-    // The two files meet here. This is what the demo is for: one observable, reached from a feed
-    // attribute and a detection rule, because both canonicalise to the same identifier.
+    // The two files meet here: one observable from a STIX indicator and a Sigma rule, because both
+    // canonicalise to the same identifier.
     assert_eq!(
         pack["disposition"], "malicious",
-        "the MISP `to_ids` flag should have produced a disposition: {pack}"
+        "STIX malicious-activity indicator should produce a disposition: {pack}"
     );
     assert!(
         !pack["findings"].as_array().unwrap().is_empty(),

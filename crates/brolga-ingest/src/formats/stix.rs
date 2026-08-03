@@ -20,7 +20,7 @@
 //! - **`indicator`** — the object STIX actually carries observables in. Its `pattern` is read by
 //!   [`crate::formats::stix_pattern`], which maps `=` comparisons against supported object paths,
 //!   `OR`-joined if there is more than one, and **refuses everything else by name**. Observables go
-//!   through the same canonicalisers the MISP parser uses, so one address published by both feeds
+//!   through shared canonicalisers, so one address published by two STIX feeds
 //!   derives one identifier rather than landing in the graph twice. `indicator_types` becomes a
 //!   [`Disposition`] only where it states an assessment; `valid_from` / `valid_until` become the
 //!   claim's validity window; `name` and `description` are kept as evidence. A disjunction fans out

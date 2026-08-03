@@ -711,48 +711,38 @@ fn an_ipv4_indicator_produces_a_claim_about_the_address_its_pattern_names() {
     );
 }
 
-/// The second criterion, and the one that decides whether a mixed deployment double-counts. The
-/// MISP and STIX paths must derive **one** identifier for one address, or the same address sits in
-/// the graph twice and a lookup finds half of what is held.
+/// Two STIX documents naming the same address must derive **one** observable identifier, or the
+/// same address sits in the graph twice and a lookup finds half of what is held.
 #[test]
-fn a_stix_indicator_and_a_misp_attribute_for_one_address_derive_one_observable() {
-    use brolga_ingest::formats::misp::MispParser;
+fn two_stix_indicators_for_one_address_derive_one_observable() {
+    const OTHER: &str = r#"{
+      "type": "bundle",
+      "id": "bundle--aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "objects": [{
+        "type": "indicator",
+        "spec_version": "2.1",
+        "id": "indicator--bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "created": "2024-02-01T00:00:00.000Z",
+        "name": "same address, second publisher",
+        "pattern_type": "stix",
+        "pattern": "[ipv4-addr:value = '203.0.113.42']",
+        "indicator_types": ["malicious-activity"],
+        "valid_from": "2024-02-01T00:00:00.000Z"
+      }]
+    }"#;
 
-    const EVENT: &str = r#"{"Event":{"uuid":"33333333-3333-4333-8333-333333333333",
-        "info":"C2 infrastructure","Attribute":[
-        {"uuid":"44444444-4444-4444-8444-444444444444","type":"ip-dst",
-         "value":"203.0.113.42","to_ids":true}]}}"#;
-
-    let stix = prepare(INDICATORS.as_bytes());
-
-    let mut registry = ParserRegistry::new();
-    registry.register(MispParser::boxed());
-    let misp = Pipeline::with_defaults(registry)
-        .in_mode(IngestMode::Permissive)
-        .prepare(
-            &Document {
-                bytes: EVENT.as_bytes(),
-                media_type: MediaType::new("application/vnd.misp+json").unwrap(),
-                file_name: None,
-                origin: SourceOrigin::NetworkFeed {
-                    publisher: ShortText::new("misp-fixture").unwrap(),
-                    location: None,
-                },
-                retrieved_at: Timestamp::unix_epoch(),
-            },
-            &CancellationToken::never_cancelled(),
-        )
-        .unwrap();
+    let first = prepare(INDICATORS.as_bytes());
+    let second = prepare(OTHER.as_bytes());
 
     let address = ipv4("203.0.113.42");
-    let from_stix = claims_about(&stix, &address);
-    let from_misp = claims_about(&misp, &address);
+    let from_first = claims_about(&first, &address);
+    let from_second = claims_about(&second, &address);
 
-    assert!(!from_stix.is_empty(), "the STIX indicator mapped nothing");
-    assert!(!from_misp.is_empty(), "the MISP attribute mapped nothing");
+    assert!(!from_first.is_empty(), "the first STIX indicator mapped nothing");
+    assert!(!from_second.is_empty(), "the second STIX indicator mapped nothing");
     assert_eq!(
-        from_stix[0].subject, from_misp[0].subject,
-        "the two ingestion paths must address one observable"
+        from_first[0].subject, from_second[0].subject,
+        "both STIX paths must address one observable"
     );
 }
 

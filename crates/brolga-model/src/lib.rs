@@ -6,7 +6,7 @@
 //!
 //! # Source formats stop at the door
 //!
-//! There is no STIX field, no MISP field, and no ATT&CK field in this crate. Parsers translate
+//! There is no STIX field and no ATT&CK field in this crate. Parsers translate
 //! *onto* these types; none of their vocabulary translates *into* them. That boundary is what lets
 //! a new source format be added later without renegotiating the meaning of an existing record, and
 //! it is why the enums here are described in terms of what they mean rather than what any one

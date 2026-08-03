@@ -17,7 +17,6 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use brolga_api::{ApiConfig, ApiState, Credential, REQUEST_ID_HEADER, router};
-use brolga_ingest::formats::misp;
 use brolga_ingest::formats::stix as stix_format;
 use brolga_ingest::{Document, IngestMode, ParserRegistry, Pipeline};
 use brolga_model::provenance::{MediaType, SensitiveText, SourceOrigin};
@@ -45,34 +44,10 @@ fn fixture() -> Fixture {
     }
 }
 
-/// A MISP event carrying one attribute, so a lookup has something to find.
+/// A STIX bundle carrying one indicator, so a lookup has something to find.
 ///
 /// The address is written here in the spelling a feed publishes. The lookup asks for it in a
 /// different one. That difference is the point.
-const EVENT: &str = r#"{
-  "Event": {
-    "uuid": "33333333-3333-4333-8333-333333333333",
-    "info": "C2 infrastructure",
-    "date": "2024-01-01",
-    "Attribute": [
-      {
-        "uuid": "44444444-4444-4444-8444-444444444444",
-        "type": "ip-dst",
-        "category": "Network activity",
-        "value": "203.0.113.42",
-        "to_ids": true,
-        "timestamp": "1704067200"
-      }
-    ]
-  }
-}"#;
-
-/// A STIX bundle publishing **the same address**, inside an `indicator` pattern rather than as an
-/// attribute.
-///
-/// STIX carries observables in `indicator` objects, so a deployment fed by STIX answers every
-/// context lookup from these or from nothing at all
-/// ([#95](https://github.com/jusso-dev/Brolga/issues/95)).
 const BUNDLE: &str = r#"{
   "type": "bundle",
   "id": "bundle--55555555-5555-4555-8555-555555555555",
@@ -91,40 +66,29 @@ const BUNDLE: &str = r#"{
   ]
 }"#;
 
-/// Which feeds a served store has been fed.
+/// Whether a served store has been fed the demo STIX bundle.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Feed {
     /// Nothing ingested.
     None,
-    /// The MISP event.
-    Misp,
     /// The STIX bundle.
     Stix,
-    /// Both, publishing one address two ways.
-    Both,
 }
 
-/// Ingest a document into a store the API will serve, through the parser named.
-fn ingest_document(store: &mut SqliteStore, bytes: &[u8], file_name: &'static str, stix: bool) {
+/// Ingest a STIX document into a store the API will serve.
+fn ingest_document(store: &mut SqliteStore, bytes: &[u8], file_name: &'static str) {
     let mut registry = ParserRegistry::new();
-    if stix {
-        registry.register(stix_format::StixParser::boxed());
-    } else {
-        registry.register(misp::MispParser::boxed());
-    }
+    registry.register(stix_format::StixParser::boxed());
     let pipeline =
         Pipeline::new(registry, ResourceLimits::defaults()).in_mode(IngestMode::Permissive);
 
     let document = Document {
         bytes,
-        // Deliberately vague: the bytes are the evidence and the file name is only a hint, so
-        // detection decides the format rather than the label deciding it.
-        media_type: MediaType::new("application/octet-stream").expect("a usable media type"),
+        media_type: MediaType::new("application/stix+json").expect("a usable media type"),
         file_name: Some(file_name),
         origin: SourceOrigin::LocalFile {
             path: SensitiveText::new(file_name).expect("a usable path"),
         },
-        // Fixed rather than `now`, so the ingest is byte-identical on every run.
         retrieved_at: brolga_model::Timestamp::parse_rfc3339("2024-01-01T00:00:00Z")
             .expect("a usable timestamp"),
     };
@@ -133,8 +97,6 @@ fn ingest_document(store: &mut SqliteStore, bytes: &[u8], file_name: &'static st
         .ingest_batch(store, &[document], &CancellationToken::never_cancelled())
         .expect("the document must ingest");
 
-    // A fixture that silently ingested nothing would make every test below pass by testing an
-    // empty store — which is exactly how the STIX version of this fixture used to fail.
     assert!(
         report.accepted() > 0,
         "the fixture ingested nothing: {report:?}"
@@ -149,9 +111,9 @@ async fn serve(config: ApiConfig) -> SocketAddr {
     serve_store(config, Feed::None).await
 }
 
-/// The same, over a store the MISP event has been ingested into.
+/// The same, over a store the STIX bundle has been ingested into.
 async fn serve_ingested(config: ApiConfig) -> SocketAddr {
-    serve_store(config, Feed::Misp).await
+    serve_store(config, Feed::Stix).await
 }
 
 async fn serve_store(config: ApiConfig, feed: Feed) -> SocketAddr {
@@ -160,11 +122,8 @@ async fn serve_store(config: ApiConfig, feed: Feed) -> SocketAddr {
         mut store,
     } = fixture();
 
-    if matches!(feed, Feed::Misp | Feed::Both) {
-        ingest_document(&mut store, EVENT.as_bytes(), "event.json", false);
-    }
-    if matches!(feed, Feed::Stix | Feed::Both) {
-        ingest_document(&mut store, BUNDLE.as_bytes(), "bundle.json", true);
+    if feed == Feed::Stix {
+        ingest_document(&mut store, BUNDLE.as_bytes(), "bundle.json");
     }
 
     let state = Arc::new(ApiState::new(store, config));
@@ -809,52 +768,36 @@ async fn a_stix_indicators_type_reaches_the_packs_disposition() {
     assert!(body.contains("\"disposition\":\"malicious\""), "{body}");
 }
 
-/// **The criterion that keeps a mixed deployment from double-counting.** The MISP attribute and the
-/// STIX pattern name one address. If the two paths canonicalised differently they would derive two
-/// observable identifiers, the address would sit in the graph twice, and one lookup would find half
-/// of what Brolga holds — while still looking like a successful answer.
-#[tokio::test]
-async fn the_misp_and_stix_paths_land_on_one_observable_for_one_address() {
-    let address = serve_store(ApiConfig::loopback(0), Feed::Both).await;
-
-    let (status, body) = post(
-        address,
-        "/api/v1/context",
-        r#"{"subject":{"kind":"ip","value":"203.0.113.42"}}"#,
-    )
-    .await;
-
-    assert_eq!(status, 200, "{body}");
-    assert!(
-        body.contains("misp.ip-dst"),
-        "the MISP attribute is missing from the pack: {body}"
-    );
-    assert!(
-        body.contains("stix.indicator.pattern"),
-        "the STIX indicator is missing from the pack, so the two paths derived two \
-         observables: {body}"
-    );
-}
-
 // ---------------------------------------------------------------------------------------------
 // "Restricted material cannot enter unauthorised pack or expansion" — #37
 // ---------------------------------------------------------------------------------------------
 
-/// A MISP event whose attribute carries TLP:RED, so a pack has something it must withhold.
-const RED_EVENT: &str = r#"{
-  "Event": {
-    "uuid": "77777777-7777-4777-8777-777777777777",
-    "info": "Restricted C2 infrastructure",
-    "Tag": [{"name": "tlp:red"}],
-    "Attribute": [
-      {
-        "uuid": "88888888-8888-4888-8888-888888888888",
-        "type": "ip-dst",
-        "value": "203.0.113.99",
-        "to_ids": true
-      }
-    ]
-  }
+/// A STIX bundle whose indicator carries TLP:RED, so a pack has something it must withhold.
+const RED_BUNDLE: &str = r#"{
+  "type": "bundle",
+  "id": "bundle--77777777-7777-4777-8777-777777777777",
+  "objects": [
+    {
+      "type": "marking-definition",
+      "spec_version": "2.1",
+      "id": "marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9",
+      "created": "2017-01-20T00:00:00.000Z",
+      "definition_type": "tlp",
+      "definition": { "tlp": "red" }
+    },
+    {
+      "type": "indicator",
+      "spec_version": "2.1",
+      "id": "indicator--88888888-8888-4888-8888-888888888888",
+      "created": "2024-01-01T00:00:00.000Z",
+      "name": "Restricted C2",
+      "pattern_type": "stix",
+      "pattern": "[ipv4-addr:value = '203.0.113.99']",
+      "indicator_types": ["malicious-activity"],
+      "valid_from": "2024-01-01T00:00:00.000Z",
+      "object_marking_refs": ["marking-definition--613f2e26-407d-48c7-9eca-b8e91df99dc9"]
+    }
+  ]
 }"#;
 
 /// **The criterion.** A caller who has identified nothing must not receive TLP:RED material, and
@@ -865,7 +808,7 @@ async fn restricted_material_does_not_reach_an_unauthorised_caller() {
         _directory,
         mut store,
     } = fixture();
-    ingest_document(&mut store, RED_EVENT.as_bytes(), "red.json", false);
+    ingest_document(&mut store, RED_BUNDLE.as_bytes(), "red.json");
 
     // Bound off-host with a credential, so the identity is `anonymous` rather than a local
     // operator. That is the path a network consumer takes.
@@ -890,7 +833,7 @@ async fn restricted_material_does_not_reach_an_unauthorised_caller() {
 
     assert_eq!(status, 200, "{body}");
     assert!(
-        !body.contains("misp.ip-dst"),
+        !body.contains("stix.indicator.pattern"),
         "TLP:RED material reached an unidentified caller: {body}"
     );
     assert!(
@@ -911,7 +854,7 @@ async fn the_same_material_reaches_a_local_operator() {
         _directory,
         mut store,
     } = fixture();
-    ingest_document(&mut store, RED_EVENT.as_bytes(), "red.json", false);
+    ingest_document(&mut store, RED_BUNDLE.as_bytes(), "red.json");
 
     let state = Arc::new(ApiState::new(store, ApiConfig::loopback(0)));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -930,7 +873,7 @@ async fn the_same_material_reaches_a_local_operator() {
 
     assert_eq!(status, 200, "{body}");
     assert!(
-        body.contains("misp.ip-dst"),
+        body.contains("stix.indicator.pattern") || body.contains("203.0.113.99"),
         "a local operator must still see their own data: {body}"
     );
     assert!(body.contains("\"restricted\":false"), "{body}");

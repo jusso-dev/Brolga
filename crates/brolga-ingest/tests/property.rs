@@ -19,7 +19,7 @@
 
 use brolga_ingest::detect::FormatHint;
 use brolga_ingest::formats::stix_pattern;
-use brolga_ingest::formats::{delimited, misp, sigma, stix};
+use brolga_ingest::formats::{delimited, sigma, stix};
 use brolga_ingest::testing::{CatchAllParser, TestRecordsParser};
 use brolga_ingest::{Document, ParserRegistry, Pipeline};
 use brolga_model::{
@@ -44,7 +44,6 @@ fn registry() -> ParserRegistry {
 fn shipping_registry() -> ParserRegistry {
     let mut registry = ParserRegistry::new();
     registry.register(stix::StixParser::boxed());
-    registry.register(misp::MispParser::boxed());
     registry.register(delimited::DelimitedParser::boxed());
     registry.register(delimited::JsonLinesParser::boxed());
     registry.register(sigma::SigmaParser::boxed());
@@ -368,7 +367,7 @@ proptest! {
     }
 
     /// Any address, in any of the spellings a feed publishes it in, must reach the same observable
-    /// through a STIX pattern as through a MISP attribute. The two paths agreeing is what keeps one
+    /// through a STIX pattern regardless of which document published it. Agreement is what keeps one
     /// address from sitting in the graph twice.
     #[test]
     fn a_pattern_and_a_bare_value_canonicalise_alike(

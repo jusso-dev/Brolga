@@ -30,7 +30,7 @@ use crate::version::{SchemaTag, VersionedSchema};
 /// The kind of thing an [`Entity`] names.
 ///
 /// Deliberately vocabulary-neutral. These are the categories the roadmap names, chosen so that STIX
-/// domain objects, MISP galaxies, and ATT&CK groups can each map *onto* them without any of those
+/// domain objects and ATT&CK groups can each map *onto* them without any of those
 /// vocabularies leaking *into* the canonical model.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, JsonSchema,

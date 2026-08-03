@@ -3,7 +3,7 @@
 //! # The problem
 //!
 //! Brolga's connectors fetch URLs. Some of those URLs come from configuration, and later ones will
-//! come from intelligence data — a STIX object's `external_references`, a MISP attribute, a TAXII
+//! come from intelligence data — a STIX object's `external_references`, a STIX object, a TAXII
 //! discovery response naming its own collection endpoints. A request Brolga makes on behalf of that
 //! data is a request made *from inside the operator's network*, which is exactly what a cloud
 //! metadata endpoint or an unauthenticated internal service is not expecting.
@@ -219,7 +219,7 @@ impl fmt::Display for AddressCategory {
 /// Outbound network policy.
 ///
 /// The defaults refuse everything that is not publicly routable and refuse plaintext HTTP. An
-/// operator running an internal MISP has to say so, and saying so is a visible configuration change
+/// operator running an internal OpenCTI has to say so, and saying so is a visible configuration change
 /// rather than the state Brolga shipped in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -232,7 +232,7 @@ pub struct NetworkPolicy {
 
     /// Whether non-public addresses may be connected to.
     ///
-    /// `false`. This is the SSRF control. An operator with an internal MISP sets it deliberately
+    /// `false`. This is the SSRF control. An operator with an internal OpenCTI sets it deliberately
     /// and, ideally, alongside an allow-list.
     pub allow_private_addresses: bool,
 
@@ -268,7 +268,7 @@ impl NetworkPolicy {
 
     /// A policy for reaching internal systems, still refusing cloud metadata.
     ///
-    /// The shape an operator with an internal MISP actually needs, provided as a named constructor
+    /// The shape an operator with an internal OpenCTI actually needs, provided as a named constructor
     /// so it is reached for as a whole rather than assembled field by field until it works.
     #[must_use]
     pub const fn internal_network() -> Self {
@@ -477,7 +477,7 @@ mod tests {
 
     #[test]
     fn enabling_internal_fetches_does_not_enable_metadata_access() {
-        // An operator with an internal MISP almost never means "and also let a feed read my
+        // An operator with an internal OpenCTI almost never means "and also let a feed read my
         // instance credentials".
         let policy = NetworkPolicy::internal_network();
 

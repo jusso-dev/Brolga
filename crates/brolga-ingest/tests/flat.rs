@@ -161,17 +161,15 @@ fn the_delimiter_is_chosen_by_consistency_rather_than_by_count() {
     assert_eq!(sniff_delimiter(plain), Delimiter::None);
 }
 
-/// A catch-all JSON reader that outbid STIX or MISP would silently downgrade every bundle to
-/// untyped attributes. It must decline rather than compete.
+/// A catch-all JSON reader that outbid STIX would silently downgrade every bundle to untyped
+/// attributes. It must decline rather than compete.
 #[test]
 fn the_generic_json_reader_declines_documents_a_specific_parser_owns() {
-    use brolga_ingest::formats::misp::MispParser;
     use brolga_ingest::formats::stix::StixParser;
 
     let mut registry = ParserRegistry::new();
     registry.register(JsonLinesParser::boxed());
     registry.register(StixParser::boxed());
-    registry.register(MispParser::boxed());
     let pipeline = Pipeline::with_defaults(registry).in_mode(IngestMode::Permissive);
 
     let bundle = br#"{"type":"bundle","id":"bundle--x","objects":[]}"#;

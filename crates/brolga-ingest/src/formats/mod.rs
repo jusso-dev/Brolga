@@ -8,9 +8,8 @@
 //! cancellation, storage, and quarantine are the pipeline's, so a new format gets all five by
 //! construction and cannot weaken any of them by leaving something out.
 
-// Core TI formats only: STIX, MISP, flat feeds, Sigma, plus XML helpers for mappings.
+// Core formats: STIX (OpenCTI/TAXII path), flat feeds, Sigma, plus XML helpers for mappings.
 pub mod delimited;
-pub mod misp;
 pub mod sigma;
 pub mod stix;
 pub mod stix_pattern;

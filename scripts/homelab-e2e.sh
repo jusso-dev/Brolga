@@ -30,7 +30,7 @@ docker compose run --rm brolga doctor
 echo "== ingest demo ==" >&2
 # Prefer baked image paths (works on remote Docker contexts). Host drops use /feeds-host.
 docker compose run --rm brolga ingest \
-  /feeds/demo-misp.json /feeds/demo-sigma.yml --mode permissive
+  /feeds/demo-stix.json /feeds/demo-sigma.yml --mode permissive
 
 echo "== context ==" >&2
 docker compose run --rm brolga context ip 203.0.113.42

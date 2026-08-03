@@ -50,7 +50,6 @@
 
 pub mod json;
 pub mod markdown;
-pub mod misp;
 pub mod stix;
 
 use std::collections::BTreeMap;
@@ -401,7 +400,6 @@ impl ExporterRegistry {
             json::YamlExporter::boxed(),
             json::JsonLinesExporter::boxed(),
             stix::StixExporter::boxed(),
-            misp::MispExporter::boxed(),
             markdown::MarkdownExporter::boxed(),
             markdown::TextExporter::boxed(),
             markdown::AgentBriefExporter::boxed(),

@@ -28,11 +28,11 @@ ingest_one() {
   fi
 }
 
-# Demo journey first: MISP + Sigma that meet on 203.0.113.42 (matches README/journey tests).
+# Demo journey first: STIX + Sigma that meet on 203.0.113.42 (matches README/journey tests).
 ingest_one /feeds/demo/feed.json
 ingest_one /feeds/demo/rule.yml
 
-# Format families claimed by the capability matrix (fixture mode).
+# Format families still supported by the slim product.
 for path in \
   /feeds/plain/iocs.txt \
   /feeds/csv/indicators.csv \
@@ -44,17 +44,7 @@ for path in \
   /feeds/stix/bundle.json \
   /feeds/stix/bundle-2.0.json \
   /feeds/stix/attack.json \
-  /feeds/misp/event.json \
-  /feeds/misp/warninglist.json \
   /feeds/detection/rules.yml \
-  /feeds/detection/rules.yar \
-  /feeds/telemetry/events.log \
-  /feeds/xml/definition.ioc \
-  /feeds/xml/incident.iodef \
-  /feeds/vulnerability/kev-catalog.json \
-  /feeds/vulnerability/osv-1.6.json \
-  /feeds/vulnerability/sarif-2.1.0.json \
-  /feeds/vulnerability/cyclonedx-1.5.json \
   /feeds/malformed/not-json.txt
 do
   ingest_one "$path"

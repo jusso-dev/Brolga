@@ -36,7 +36,7 @@
 
 use brolga_ingest::canon;
 use brolga_ingest::detect::FormatHint;
-use brolga_ingest::formats::{delimited, misp, sigma, stix, stix_pattern};
+use brolga_ingest::formats::{delimited, sigma, stix, stix_pattern};
 use brolga_ingest::mapping::Mapping;
 use brolga_ingest::{Document, IngestMode, ParserRegistry, Pipeline};
 use brolga_model::provenance::{MediaType, SourceOrigin};
@@ -63,7 +63,6 @@ pub const MEDIA_TYPES: &[&str] = &[
 pub fn shipping_registry() -> ParserRegistry {
     let mut registry = ParserRegistry::new();
     registry.register(stix::StixParser::boxed());
-    registry.register(misp::MispParser::boxed());
     registry.register(delimited::DelimitedParser::boxed());
     registry.register(delimited::JsonLinesParser::boxed());
     registry.register(sigma::SigmaParser::boxed());

@@ -23,7 +23,7 @@
 //!
 //! - The **same canonical identifier** — the records already resolve to one thing.
 //! - The **same external identifier** in the same namespace — two records both carrying MITRE's
-//!   `G0007`, or the same MISP UUID, or the same CVE. The authority did the identification; Brolga
+//!   `G0007`, or the same CVE. The authority did the identification; Brolga
 //!   is reading it, not inferring it.
 //! - A **declared alias** — somebody stated that these two names denote one thing, and that
 //!   statement is recorded with who made it.
@@ -533,7 +533,7 @@ pub struct ResolvableRecord {
     pub name: String,
     /// External identifiers it carries, as `namespace` to `value`.
     ///
-    /// The decisive signal. `mitre-attack` to `G0007`, `misp` to a UUID, `cve` to `CVE-2021-44228`.
+    /// The decisive signal. `mitre-attack` to `G0007`, `cve` to `CVE-2021-44228`.
     pub external_ids: BTreeMap<String, String>,
     /// Markings, so a merge can be checked for marking loss.
     pub markings: MarkingSet,

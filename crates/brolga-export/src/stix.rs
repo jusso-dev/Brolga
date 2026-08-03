@@ -2,7 +2,7 @@
 //!
 //! # This is a projection, not a translation, and the difference is the whole module
 //!
-//! [#54](https://github.com/jusso-dev/Brolga/issues/54) requires that "STIX and MISP exporters
+//! [#54](https://github.com/jusso-dev/Brolga/issues/54) requires that "STIX exporters
 //! document unmappable fields". That requirement exists because "export to STIX" *sounds* like a
 //! change of encoding and is actually a change of model, and a consumer who does not know which
 //! fields vanished will assume none did.

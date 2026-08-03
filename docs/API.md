@@ -223,7 +223,7 @@ or comparing time.
 
 #### Where observables come from
 
-Observables reach Brolga through MISP attributes and through STIX `indicator` patterns. Both paths
+Observables reach Brolga through STIX `indicator` patterns. That path
 run the value through the same canonicalisers, so one address published by both feeds is one
 observable in the graph rather than two — a lookup finds everything held about it, not half.
 
