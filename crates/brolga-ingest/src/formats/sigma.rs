@@ -95,6 +95,18 @@ impl IntelligenceParser for SigmaParser {
                 "media type is a Sigma rule",
             );
         }
+
+        // Sigma is YAML. Never compete on STIX/JSON media types: OpenCTI `toStix` pages arrive as
+        // `application/stix+json`, and dual `Certain` with the STIX parser refuses the whole page.
+        let media = hint.media_type();
+        if media.contains("json") || media.contains("stix") || media.contains("xml") {
+            return candidate(
+                self,
+                DetectionConfidence::Declined,
+                "media type is not a Sigma YAML type",
+            );
+        }
+
         let Some(text) = hint.prefix_str() else {
             return candidate(
                 self,
@@ -102,6 +114,16 @@ impl IntelligenceParser for SigmaParser {
                 "input is not valid UTF-8",
             );
         };
+
+        // JSON that happens to mention `logsource` / `detection` is still not a Sigma rule.
+        let trimmed = text.trim_start();
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return candidate(
+                self,
+                DetectionConfidence::Declined,
+                "looks like JSON, not a Sigma YAML rule",
+            );
+        }
 
         // `logsource` and `detection` together are what make a YAML document a Sigma rule. Either
         // alone appears in unrelated configuration, and claiming every YAML file would take
