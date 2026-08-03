@@ -455,15 +455,25 @@ One writer at a time for ingest; the API may serve during a single ingest.
 
 ### Pulling from OpenCTI into this host
 
-CLI default service has `network_mode: none`. For fetch, give the one-off a network:
+CLI default service has `network_mode: none`. On the homelab, OpenCTI is a **separate** Compose
+project at `~/opencti` (UI **:8081**). Copy `OPENCTI_ADMIN_TOKEN` into `~/brolga/.env` as
+`BROLGA_OPENCTI_TOKEN` (mode 600).
 
 ```bash
-export BROLGA_OPENCTI_TOKEN=…   # never on the CLI flags
-docker compose run --rm --network bridge brolga \
-  fetch opencti https://opencti.example.org --name lab-octi --allow-private
+export BROLGA_OPENCTI_TOKEN=…   # never as a CLI flag
+docker run --rm --network host \
+  -e BROLGA_OPENCTI_TOKEN \
+  -v brolga_brolga-data:/data -w /data \
+  brolga:local \
+  fetch opencti http://127.0.0.1:8081 \
+    --name homelab-opencti \
+    --allow-private --allow-http \
+    --database /data/brolga.sqlite
 ```
 
-(Adjust URL/network policy for your OpenCTI placement.)
+`--allow-http` for plain HTTP on the LAN; `--allow-private` for loopback/RFC1918. HTTPS OpenCTI
+does not need `--allow-http`.
+
 
 ## Audit events
 
