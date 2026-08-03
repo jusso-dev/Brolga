@@ -60,10 +60,16 @@ fn fetch_opencti<Out: Write, Err: Write>(
     opencti: &OpenCtiArgs,
     streams: &mut Streams<Out, Err>,
 ) -> ExitCode {
-    let Some(token) = std::env::var(OPENCTI_TOKEN_VARIABLE)
-        .ok()
-        .and_then(|token| SensitiveText::new(token).ok())
-    else {
+    // OpenCTI expects `Authorization: Bearer <uuid>`. Accept a raw token or one that already
+    // carries the prefix (same pattern as TAXII).
+    let Some(token) = std::env::var(OPENCTI_TOKEN_VARIABLE).ok().and_then(|raw| {
+        let header = if raw.starts_with("Bearer ") {
+            raw
+        } else {
+            format!("Bearer {raw}")
+        };
+        SensitiveText::new(header).ok()
+    }) else {
         let _ = streams.problem(&format!(
             "no API token: set {OPENCTI_TOKEN_VARIABLE}. A token is not accepted as a flag, \
              because a credential on a command line is in the shell history and in any process \

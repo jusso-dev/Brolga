@@ -171,8 +171,11 @@ impl QueryOperation {
 }
 
 /// A page of STIX objects, ordered by modification time so a cursor over it is monotonic.
+// OpenCTI 6.x requires `$since` non-null (`Any!`); the client always sends a high-water mark
+// (epoch on the first run). `values` is a list of strings, not interpolated GraphQL variables of
+// type Any embedded in the list — the filter values field accepts the variable as the sole entry.
 const OPENCTI_STIX_OBJECTS: &str = "\
-query BrolgaStixObjects($first: Int!, $after: ID, $since: Any) {
+query BrolgaStixObjects($first: Int!, $after: ID, $since: Any!) {
   stixCoreObjects(
     first: $first
     after: $after
@@ -186,7 +189,6 @@ query BrolgaStixObjects($first: Int!, $after: ID, $since: Any) {
     edges { node { id standard_id entity_type created_at updated_at toStix } }
   }
 }";
-
 /// The server's identity, used to confirm a token authenticates before any paging begins.
 const OPENCTI_ABOUT: &str = "\
 query BrolgaAbout {
