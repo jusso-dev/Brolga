@@ -1,4 +1,10 @@
+# Build artefacts — never commit binaries or compiler output
 /target/
+**/target/
+fuzz/target/
+plugins/*/target/
+plugins/**/target/
+examples/plugins/**/target/
 **/*.rs.bk
 *.profraw
 *.sqlite
@@ -11,8 +17,4 @@
 .idea/
 .vscode/
 .claude/overnight-*/
-plugins/*/target/
-
-# Lab demo artefacts
 lab/output/
-
