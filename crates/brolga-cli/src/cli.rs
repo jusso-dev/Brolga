@@ -155,9 +155,9 @@ pub(crate) enum Command {
     /// Import intelligence from one or more files.
     Ingest(IngestArgs),
 
-    /// Retrieve intelligence from a remote server.
+    /// Pull intelligence from OpenCTI (primary) or TAXII.
     ///
-    /// Read-only. Brolga never publishes to an upstream platform.
+    /// Read-only. Brolga never publishes back to the platform.
     Fetch(FetchArgs),
 
     /// Show what is in the store.
@@ -406,26 +406,22 @@ pub(crate) struct FetchArgs {
 
 /// Which upstream a fetch reads.
 ///
-/// A subcommand rather than a `--type` flag, because the two protocols do not take the same
-/// arguments: a TAXII collection identifier and a MISP instance name are different things, and a
-/// single flat argument set would accept combinations that mean nothing.
+/// OpenCTI is the primary product integration. TAXII is for STIX collections outside OpenCTI.
+/// Subcommands rather than a `--type` flag: the two protocols do not take the same arguments.
 #[derive(Debug, clap::Subcommand)]
 pub(crate) enum FetchSource {
-    /// Read a TAXII 2.0 or 2.1 server.
-    Taxii(TaxiiArgs),
-    /// Read a MISP instance.
-    Misp(MispArgs),
-    /// Poll an OpenCTI instance, or import a STIX bundle it exported.
+    /// Poll an OpenCTI instance (GraphQL → `toStix` → STIX parser). **Primary TI source.**
     Opencti(OpenCtiArgs),
+    /// Read a TAXII 2.0 or 2.1 server (secondary STIX collections).
+    Taxii(TaxiiArgs),
 }
 
 impl FetchSource {
     /// The connector's name, for a diagnostic.
     pub(crate) const fn as_str(&self) -> &'static str {
         match self {
-            Self::Taxii(_) => "taxii",
-            Self::Misp(_) => "misp",
             Self::Opencti(_) => "opencti",
+            Self::Taxii(_) => "taxii",
         }
     }
 }
@@ -452,34 +448,7 @@ pub(crate) struct TaxiiArgs {
     pub(crate) discover_only: bool,
 }
 
-/// `brolga fetch misp`.
-#[derive(Debug, Args)]
-pub(crate) struct MispArgs {
-    /// The MISP instance's base URL.
-    pub(crate) url: String,
-
-    /// A name for this instance.
-    ///
-    /// Half of every cursor key it owns, so an instance that moves hostname is still the same
-    /// instance and does not resync from the beginning. Defaults to the URL's host.
-    #[arg(long)]
-    pub(crate) name: Option<String>,
-
-    /// Which feeds to read. Repeatable. Defaults to events and warning lists.
-    #[arg(long = "feed", value_enum)]
-    pub(crate) feeds: Vec<MispFeedArg>,
-}
-
-/// Which MISP feed to read.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub(crate) enum MispFeedArg {
-    /// Events, with their attributes, tags, and galaxy clusters inline.
-    Events,
-    /// Warning lists, which flag likely false positives.
-    Warninglists,
-}
-
-/// `brolga fetch opencti`.
+/// `brolga fetch opencti` — primary remote TI source.
 #[derive(Debug, Args)]
 pub(crate) struct OpenCtiArgs {
     /// The OpenCTI instance's base URL. The GraphQL endpoint is `<url>/graphql`.

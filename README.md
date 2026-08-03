@@ -4,10 +4,10 @@
 
 # Brolga
 
-> **Normalize threat feeds. Serve the result.**
+> **Normalize OpenCTI (and STIX) into a local store. Serve the result.**
 >
-> Brolga is a Rust threat-intelligence normalizer: pull STIX / TAXII / OpenCTI / MISP / flat feeds,
-> store one canonical graph in SQLite, query and serve it.
+> Brolga sits next to your OpenCTI instance: pull entities as STIX, keep a compact local SQLite
+> store with provenance, query and serve context for operators and tools.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -15,50 +15,55 @@
 
 | Job | How |
 | --- | --- |
-| Ingest files | STIX 2.x, MISP events, Sigma rules, CSV/TSV/JSON/NDJSON (+ declarative mappings for other shapes) |
-| Pull remotes | TAXII 2.0/2.1, OpenCTI, MISP — **read-only** |
+| **Primary source** | **OpenCTI** — GraphQL poll (`toStix` → STIX parser), cursor resume |
+| Secondary remotes | TAXII 2.0/2.1 collections (read-only) |
+| File ingest | STIX 2.x bundles, flat CSV/TSV/JSON/NDJSON, Sigma rules, optional MISP JSON dumps |
 | Store | Local SQLite (optional PostgreSQL with `--features postgres`) |
 | Query | `context`, `search`, `show`, `stats`, `sources`, `quarantine` |
 | Serve | Read-only HTTP API (`brolga serve`) |
-| Export | Pack JSON, STIX, MISP, Markdown / text |
+| Export | Pack JSON, STIX, Markdown / text (MISP export still available as interchange) |
 
-**Not supported** (by design): publishing back to platforms, running YARA/Sigma as a scanner,
-evaluating vuln version ranges, Wasm plugins, or LLM proposals.
+**Not supported** (by design): writing back to OpenCTI/MISP, live MISP API sync, running detection
+engines as a scanner, Wasm plugins, or LLM proposals.
 
-## Quick start
+## Quick start — OpenCTI
 
 ```bash
 cargo build --release
 export PATH="$PWD/target/release:$PATH"
 
-brolga ingest examples/demo/feed.json examples/demo/rule.yml --mode permissive
+# Token never on the CLI (history / process list).
+export BROLGA_OPENCTI_TOKEN="your-opencti-api-token"
+
+# Pull STIX from the instance (incremental after first run).
+brolga fetch opencti https://opencti.example.org \
+  --name my-opencti \
+  --allow-private   # only if the instance is on a private network
+
 brolga stats
 brolga context ip 203.0.113.42
 
-# Remote feeds (needs network + trust config)
-# brolga fetch taxii --url https://… 
-# brolga fetch opencti --url https://…
-
-# Serve the store over HTTP
+# Serve the local store
 export BROLGA_API_TOKEN="$(openssl rand -hex 32)"
 brolga serve --database brolga.sqlite
 ```
 
-Nothing in the demo fixtures reaches a network — TEST-NET-3 addresses and reserved docs domains only.
+## Offline demo (no network)
+
+```bash
+brolga ingest examples/demo/feed.json examples/demo/rule.yml --mode permissive
+brolga stats
+brolga context ip 203.0.113.42
+```
+
+Fixtures use TEST-NET-3 / reserved docs domains only.
 
 ## Core loop
 
 ```text
-files / TAXII / OpenCTI / MISP
-        │
-        ▼
-   normalize → canonical entities, claims, relationships
-        │
-        ▼
-   SQLite (source bytes retained, content-addressed)
-        │
-        ├─► CLI: context / search / show
-        └─► HTTP API: brolga serve
+OpenCTI instance ──GraphQL toStix──┐
+                                   ├──► normalize (STIX) ──► SQLite ──► CLI / serve
+TAXII / STIX files ────────────────┘
 ```
 
 ## Docker
@@ -66,25 +71,21 @@ files / TAXII / OpenCTI / MISP
 ```bash
 cp .env.example .env
 printf 'BROLGA_API_TOKEN=%s\n' "$(openssl rand -hex 32)" > .env
+# Optional live pull:
+# echo 'BROLGA_OPENCTI_TOKEN=…' >> .env
+
 docker compose build
 docker compose run --rm brolga doctor
 docker compose run --rm brolga ingest /feeds/demo-misp.json /feeds/demo-sigma.yml --mode permissive
-docker compose run --rm brolga context ip 203.0.113.42
 docker compose --profile serve up -d brolga-api
 ```
 
 ## Docs
 
 - [CLI](docs/CLI.md) — command reference
-- [Architecture](docs/ARCHITECTURE.md) — crate layout (historical ADRs still under `docs/adr/`)
-- [Deployment](docs/DEPLOYMENT.md) — homelab / compose
+- [Architecture](docs/ARCHITECTURE.md)
+- [Deployment](docs/DEPLOYMENT.md)
 - [Threat model](docs/THREAT-MODEL.md)
-
-## Status
-
-Slimmed toward a single product job: **normalize TI feeds and serve them**. Optional surfaces
-(plugins, LLM proposals, MCP, YARA/OpenIOC/vuln/SBOM parsers, CSV/DOT/SARIF exporters) were removed
-from the default tree so the binary and the mental model stay small.
 
 ## License
 

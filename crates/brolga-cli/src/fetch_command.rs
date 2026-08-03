@@ -1,4 +1,10 @@
-//! `brolga fetch` — retrieve intelligence from a remote TAXII server.
+//! `brolga fetch` — pull intelligence from OpenCTI (primary) or TAXII.
+//!
+//! # Primary source: OpenCTI
+//!
+//! The product job is to normalise and serve TI that already lives in an OpenCTI instance.
+//! GraphQL poll uses each object's `toStix` rendering so the same STIX parser handles OpenCTI and
+//! file imports. TAXII remains available for STIX collections that are not OpenCTI-backed.
 //!
 //! # The two things this command says out loud
 //!
@@ -15,16 +21,15 @@
 use std::io::Write;
 
 use brolga_connectors::{
-    ConnectorError, FeedRef, MispClient, MispFeed, MispInstance, MispTarget, OpenCtiClient,
-    OpenCtiInstance, PolicyTransport, SyncOptions, SyncReport, TaxiiClient, sync_collection,
-    sync_misp_feed, sync_opencti,
+    ConnectorError, FeedRef, OpenCtiClient, OpenCtiInstance, PolicyTransport, SyncOptions,
+    SyncReport, TaxiiClient, sync_collection, sync_opencti,
 };
 use brolga_ingest::{IngestMode, Pipeline};
 use brolga_model::Timestamp;
 use brolga_model::provenance::SensitiveText;
 use brolga_security::{CancellationToken, NetworkPolicy, ResourceLimits};
 
-use crate::cli::{FetchArgs, FetchSource, MispArgs, MispFeedArg, OpenCtiArgs, TaxiiArgs};
+use crate::cli::{FetchArgs, FetchSource, OpenCtiArgs, TaxiiArgs};
 use crate::exit::ExitCode;
 use crate::output::{OutputMode, Streams};
 use crate::store_commands::{open_store, registry};
@@ -35,11 +40,8 @@ use crate::store_commands::{open_store, registry};
 /// history, in `ps` output, and in any process listing the machine keeps.
 pub(crate) const TOKEN_VARIABLE: &str = "BROLGA_TAXII_TOKEN";
 
-/// The environment variable a MISP API key is read from.
-///
-/// Same reasoning, and a separate variable because an operator with both should not have to choose
-/// which platform's credential is in scope for a shell.
-pub(crate) const MISP_KEY_VARIABLE: &str = "BROLGA_MISP_KEY";
+/// The environment variable an OpenCTI API token is read from.
+pub(crate) const OPENCTI_TOKEN_VARIABLE: &str = "BROLGA_OPENCTI_TOKEN";
 
 /// `brolga fetch`.
 pub(crate) fn fetch<Out: Write, Err: Write>(
@@ -47,14 +49,10 @@ pub(crate) fn fetch<Out: Write, Err: Write>(
     streams: &mut Streams<Out, Err>,
 ) -> ExitCode {
     match &args.source {
-        FetchSource::Taxii(taxii) => fetch_taxii(args, taxii, streams),
-        FetchSource::Misp(misp) => fetch_misp(args, misp, streams),
         FetchSource::Opencti(opencti) => fetch_opencti(args, opencti, streams),
+        FetchSource::Taxii(taxii) => fetch_taxii(args, taxii, streams),
     }
 }
-
-/// The environment variable an OpenCTI token is read from.
-pub(crate) const OPENCTI_TOKEN_VARIABLE: &str = "BROLGA_OPENCTI_TOKEN";
 
 /// `brolga fetch opencti`.
 fn fetch_opencti<Out: Write, Err: Write>(
@@ -154,94 +152,6 @@ fn cancel_for(args: &FetchArgs) -> CancellationToken {
 /// make one unmappable object cost the whole page.
 fn pipeline_for() -> Pipeline {
     Pipeline::new(registry(), ResourceLimits::defaults()).in_mode(IngestMode::Permissive)
-}
-
-/// `brolga fetch misp`.
-fn fetch_misp<Out: Write, Err: Write>(
-    args: &FetchArgs,
-    misp: &MispArgs,
-    streams: &mut Streams<Out, Err>,
-) -> ExitCode {
-    let Some(key) = std::env::var(MISP_KEY_VARIABLE)
-        .ok()
-        .and_then(|key| SensitiveText::new(key).ok())
-    else {
-        let _ = streams.problem(&format!(
-            "no API key: set {MISP_KEY_VARIABLE}. A key is not accepted as a flag, because a \
-             credential on a command line is in the shell history and in any process listing"
-        ));
-        return ExitCode::Usage;
-    };
-
-    // The host, so an instance that is not named still gets a stable cursor key rather than one
-    // derived from a URL that may carry a port or a path.
-    let name = misp
-        .name
-        .clone()
-        .unwrap_or_else(|| host_of(&misp.url).unwrap_or_else(|| misp.url.clone()));
-
-    let transport = PolicyTransport::new(policy_for(args));
-    let client = MispClient::new(&transport);
-    let instance = MispInstance::new(name.clone(), misp.url.clone(), key);
-
-    // Checked first, so a wrong key fails on one cheap request rather than part way through a
-    // paginated run that has already written a cursor.
-    match client.version(&instance) {
-        Ok(version) => {
-            let _ = streams.note(&format!("{name} — MISP {version}"));
-        }
-        Err(error) => {
-            let _ = streams.problem(&error.to_string());
-            return exit_for(&error);
-        }
-    }
-
-    let feeds: Vec<MispFeed> = if misp.feeds.is_empty() {
-        MispFeed::all().to_vec()
-    } else {
-        misp.feeds
-            .iter()
-            .map(|feed| match feed {
-                MispFeedArg::Events => MispFeed::Events,
-                MispFeedArg::Warninglists => MispFeed::WarningLists,
-            })
-            .collect()
-    };
-
-    let mut store = match open_store(&args.database, streams) {
-        Ok(store) => store,
-        Err(code) => return code,
-    };
-
-    let pipeline = pipeline_for();
-    let cancel = cancel_for(args);
-    let options = options_for(args);
-    let now = Timestamp::from_offset_date_time(time::OffsetDateTime::now_utc());
-
-    let mut reports = Vec::new();
-    let mut failed = None;
-
-    for feed in feeds {
-        let _ = streams.note(&format!("{name} — {feed}"));
-        match sync_misp_feed(
-            &client,
-            &mut store,
-            &pipeline,
-            MispTarget::new(&instance, feed),
-            now,
-            options,
-            &cancel,
-        ) {
-            Ok(report) => reports.push(report),
-            Err(error) => {
-                let _ = streams.problem(&error.to_string());
-                failed = Some(error);
-                break;
-            }
-        }
-    }
-
-    report_fetch(args.source.as_str(), &reports, failed.as_ref(), streams)
 }
 
 /// The host of a URL, for naming an instance that was not named.

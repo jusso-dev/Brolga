@@ -49,19 +49,14 @@
 #![forbid(unsafe_code)]
 
 pub mod error;
-pub mod misp;
 pub mod opencti;
 pub mod sync;
 pub mod taxii;
 pub mod transport;
 
 pub use error::ConnectorError;
-pub use misp::{MISP_CONNECTOR, MispClient, MispFeed, MispInstance, MispPage};
 pub use opencti::{OPENCTI_CONNECTOR, OpenCtiClient, OpenCtiInstance, OpenCtiPage};
-pub use sync::{
-    FeedRef, MispTarget, SyncOptions, SyncReport, TAXII_CONNECTOR, sync_collection, sync_misp_feed,
-    sync_opencti,
-};
+pub use sync::{FeedRef, SyncOptions, SyncReport, TAXII_CONNECTOR, sync_collection, sync_opencti};
 pub use taxii::{Collection, Discovery, ObjectPage, TaxiiClient, TaxiiVersion};
 pub use transport::{
     MAX_RESPONSE_BYTES, PolicyTransport, QueryOperation, QueryRequest, Request, Response, Transport,

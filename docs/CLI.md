@@ -278,31 +278,25 @@ fi
 
 ## `brolga fetch`
 
-Retrieve intelligence from a remote platform. Read-only: Brolga never publishes upstream, and the
-transport has no method that sends a body — so read-only is structural rather than a default
-somebody can flip.
+Pull intelligence from a remote platform. **OpenCTI is the primary TI source.** TAXII is secondary
+for STIX collections that are not OpenCTI-backed. Read-only: Brolga never publishes upstream.
 
-Two protocols, as subcommands, because a TAXII collection identifier and a MISP instance name are
-different things and one flat argument set would accept combinations that mean nothing.
+There is **no live MISP API connector**. MISP event JSON can still be file-ingested offline; live
+sync is OpenCTI (or TAXII).
 
 ```bash
+# Primary: OpenCTI GraphQL → toStix → local store
+export BROLGA_OPENCTI_TOKEN=...
+brolga fetch opencti https://opencti.example.org --name reef-octi
+
+# Secondary: TAXII collections
+export BROLGA_TAXII_TOKEN=...
 brolga fetch taxii https://taxii.example.org \
     --collection 91a7b528-80eb-42ed-a74d-c6fbd5a26116
-
-BROLGA_MISP_KEY=... brolga fetch misp https://misp.example.org --name reef-misp
-
-BROLGA_OPENCTI_TOKEN=... brolga fetch opencti https://opencti.example.org
 ```
 
-Discovery is attempted at `/taxii2/` and then `/taxii/`, so give the **base URL** rather than
-either path. The version is agreed from the `Content-Type` the server answers with, not guessed
-from the body: a 2.1 envelope and a 2.0 bundle are distinguishable most of the time, and a client
-that is usually right about which protocol it speaks mis-paginates the rest of the time.
-
-Omitting `--collection` reads every collection the server marks readable. Naming one the server
-does not offer is an error rather than an empty run, because the operator has a typo or the wrong
-server and a silent success hides both.
-
+For TAXII, discovery is attempted at `/taxii2/` and then `/taxii/`, so give the **base URL** rather
+than either path. Omitting `--collection` reads every collection the server marks readable.
 `--discover-only` lists what a server offers and stops, storing nothing.
 
 ### What it refuses, and how to permit it
@@ -326,24 +320,7 @@ the whole control decorative.
 A refusal exits `2` (usage) and a server failure exits `6` (I/O), because one is a decision to
 revisit and the other is somebody else's outage. A storage failure exits `4` and a timeout `8`.
 
-### `brolga fetch misp`
-
-Reads **events** — which carry their attributes, tags, and galaxy clusters inline — and **warning
-lists**. Sightings, taxonomies, and object templates are deliberately not fetched: the parser has no
-mapping for them, so fetching them would spend an operator's rate limit to produce records that
-quarantine.
-
-`--name` is the instance's identity and half of every cursor key it owns, defaulting to the URL's
-host. An instance that moves hostname keeps its name and does not resync from the beginning; two
-instances are never merged, because "three sources agree" and "one source polled three times" are
-different facts.
-
-MISP's `restSearch` is normally a `POST` with a JSON body. Brolga uses MISP's equivalent
-path-parameter `GET` form instead, so the transport keeps having no method that sends a body. The
-cost: a filter set large enough to overflow a URL cannot be expressed this way. Brolga's filters are
-a page size, a page number, and a high-water mark, so it does not come close.
-
-### `brolga fetch opencti`
+### `brolga fetch opencti` (primary)
 
 Polls `stixCoreObjects` incrementally and hands each object's own `toStix` rendering to the STIX
 parser — the same parser, over the same shape, as every other STIX source. Re-deriving Brolga's
@@ -352,39 +329,41 @@ records from OpenCTI's GraphQL fields would be a second mapping that can disagre
 An object OpenCTI cannot render as STIX is **counted, not skipped**, and appears in the run's
 quarantined total. A half-imported page that said nothing would look identical to a whole one.
 
+`--name` is half of the cursor key (default: URL host). An instance that moves hostname keeps its
+name and does not resync from the beginning.
+
 Every query is compiled into Brolga. There is no way to supply GraphQL on the command line or in
 configuration, and no compiled-in operation is a mutation — a test walks all of them to check. See
-[ADR 0006](adr/0006-a-closed-set-of-query-bodies.md) for why the transport gained a body-sending
-method at all, and what replaced the guarantee it removed.
+[ADR 0006](adr/0006-a-closed-set-of-query-bodies.md).
 
 A redirect answering a query is refused rather than followed. Re-posting a body to a location a
 server chose is how a query aimed at a configured endpoint ends up delivered somewhere else.
 
+### `brolga fetch taxii` (secondary)
+
+STIX collections over TAXII 2.0/2.1. Use when the feed is not behind OpenCTI.
+
 ### Credentials
 
-TAXII reads `BROLGA_TAXII_TOKEN`; MISP reads `BROLGA_MISP_KEY`; OpenCTI reads
-`BROLGA_OPENCTI_TOKEN`. Never a flag. A credential on a command line is in the shell
-history, in `ps` output, and in any process listing the machine keeps. The `Bearer ` prefix is
-added if it is not already there.
+| Source | Variable |
+| --- | --- |
+| OpenCTI | `BROLGA_OPENCTI_TOKEN` |
+| TAXII | `BROLGA_TAXII_TOKEN` (`Bearer ` prefix added if missing) |
+
+Never a flag. A credential on a command line is in shell history and process listings. No error
+message, log line, or stored record carries the token.
 
 ```bash
-BROLGA_TAXII_TOKEN=abc123 brolga fetch taxii https://taxii.example.org
-BROLGA_MISP_KEY=abc123    brolga fetch misp  https://misp.example.org
+BROLGA_OPENCTI_TOKEN=… brolga fetch opencti https://opencti.example.org
+BROLGA_TAXII_TOKEN=…   brolga fetch taxii  https://taxii.example.org
 ```
-
-No error message, log line, or stored record carries either credential. TAXII takes a `Bearer`
-prefix, added if it is not already there; MISP takes the raw key, which is what it expects.
-
-A MISP key is checked with one cheap `getVersion` call before any sync, so a wrong key fails
-immediately rather than part way through a paginated run that has already written a cursor.
 
 ### Resuming
 
-Each feed has a cursor keyed on `(connector, feed)` — `(taxii, <collection id>)` or
-`(misp, <instance>/<feed>)`, and never on the URL, so a server that moves hostname is still the same
-feed and does not restart from the beginning. A run sends the
-stored `added_after` and, unless `--no-etag` is given, the stored `ETag`; a `304` costs a round trip
-instead of a body.
+Each feed has a cursor keyed on `(connector, feed)` — `(opencti, <instance>/stix)` or
+`(taxii, <collection id>)`, never on the URL alone, so a server that moves hostname can keep the
+same name. A run sends the stored high-water mark; TAXII may also use a stored `ETag` unless
+`--no-etag` is given.
 
 **The cursor never moves ahead of stored data.** A page is fetched, ingested, and only then does the
 cursor advance, both inside one transaction. A malformed page therefore leaves the cursor where the
